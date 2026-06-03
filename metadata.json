@@ -1,0 +1,6 @@
+{
+  "name": "Grimmory Library Organizer",
+  "description": "An interactive playground, metadata extractor, and automator for organizing digital book libraries according to the Grimmory methodology.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
