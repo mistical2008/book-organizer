@@ -30,7 +30,7 @@ export default function App() {
         <div className="flex flex-wrap items-center gap-1.5 bg-white/5 p-1 rounded-lg border border-white/10" id="nav-tabs">
           {[
             { id: "sandbox", label: "Interactive Sandbox", icon: Cpu },
-            { id: "generator", label: "Python Daemon", icon: Settings },
+            { id: "generator", label: "Daemon Scripts", icon: Settings },
             { id: "tester", label: "Live LLM Tester", icon: Sparkles },
             { id: "methodology", label: "Methodology Docs", icon: FileText }
           ].map(tab => {

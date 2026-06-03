@@ -8,7 +8,7 @@ This system implements a transactional, staged data fetching pipeline engineered
 
 ## 🏗️ Multi-Table Staging Architecture
 
-The core python script (`librarian.py`) stores runtime transactions across four local SQLite database tables inside `grimmory_state.db` to isolate side effects:
+The core full-stack backend engine is powered by **Clojure & Babashka** (`src/clojure/grimmory/server.clj` and `babashka/container.clj`) handling the entire folder scanning and book cataloging pipeline. It stores and persists transactional states across structured record registries in `/data/state.json` to isolate side effects:
 
 1. **`scanned_books`**: Stores all mapped file scopes with their detected local ISBN tags (if any) to prevent redundant OCR scanning if the service is interrupted.
 2. **`isbn_requests`**: A dedicated queue tracking query records targeting the free **Google Books public API**.
@@ -56,6 +56,33 @@ sudo apt-get install -y tesseract-ocr tesseract-ocr-ukr tesseract-ocr-eng popple
 pip install google-genai opencv-python pillow pytesseract ebooklib beautifulsoup4 pypdf
 ```
 
+#### Clojure, ClojureScript & Babashka Stack
+For developers wanting a purely functional Lisp stack:
+1. **Babashka Engine**: Install the lightweight `bb` interpreter for scripting and task integration:
+   ```bash
+   curl -sLO https://raw.githubusercontent.com/babashka/babashka/master/install && chmod +x install && sudo ./install
+   ```
+2. **Clojure CLI Tools**: Ensure you have Clojure and standard JVM runtimes installed to run compilation tasks.
+3. **Project Files Structure**:
+   - `bb.edn`: Defines project paths, dependencies (`cheshire`, `org.babashka/http-client`), and daemon launcher shortcuts.
+   - `src/clojure/grimmory/server.clj`: A Ring-compliant, high-performance Clojure server handling API routers, folder scanning, Google Books lookup, and Gemini API bindings.
+   - `src/cljs/grimmory/core.cljs`: Reactive ClojureScript frontend using the Reagent model (Clojure interface layer for React).
+   - `babashka/container.clj`: Standalone binary and container execution suite controlling schedules, health verification, and temporary cache sweeps.
+
+To boot the Clojure backend and scheduling agent, simply invoke Babashka:
+```bash
+# Start the Ring web server on port 3000
+bb server
+
+# Start the automated scanning daemon
+bb daemon
+
+# Start the supervisor loop directly via the container orchestrator
+bb babashka/container.clj run
+```
+
+---
+
 #### NixOS (Declarative Module & Development Shell)
 
 For NixOS systems, you can install the required packages on-the-fly using a development shell, or configure the service declarively in your system configurations.
@@ -98,12 +125,12 @@ Add the dependencies and service configuration to `/etc/nixos/configuration.nix`
     djvulibre
   ];
 
-  # Define declarative systemd service matching Grimmory's custom daemon
+  # Define declarative systemd service matching Grimmory's custom Clojure daemon
   systemd.services.grimmory-librarian = {
-    description = "Grimmory Library Metadata Organizer Daemon";
+    description = "Grimmory Library Metadata Organizer Clojure Daemon";
     after = [ "network.target" ];
     wantedBy = [ "multi-user.target" ];
-    path = with pkgs; [ tesseract poppler_utils djvulibre python3 ];
+    path = with pkgs; [ tesseract poppler_utils djvulibre babashka clojure ];
     
     environment = {
       GEMINI_API_KEY = "your-api-key-here";
@@ -112,21 +139,11 @@ Add the dependencies and service configuration to `/etc/nixos/configuration.nix`
     serviceConfig = {
       Type = "simple";
       User = "root";
-      WorkingDirectory = "/var/lib/grimmory";
-      ExecStart = "${pkgs.python3}/bin/python3 /var/lib/grimmory/librarian.py";
+      WorkingDirectory = "/var/lib/grimmory-web";
+      ExecStart = "${pkgs.babashka}/bin/bb babashka/container.clj run";
       Restart = "on-failure";
       RestartSec = "30s";
     };
-  };
-
-  # Define scanning trigger timer
-  systemd.timers.grimmory-librarian = {
-    description = "Run Grimmory Library Scan Periodically";
-    timerConfig = {
-      OnCalendar = "*-*-* *:00:00"; # every hour
-      Persistent = true;
-    };
-    wantedBy = [ "timers.target" ];
   };
 }
 ```
@@ -158,14 +175,14 @@ Declare Grimmory as a custom Shepherd service inside your `/etc/config.scm` boot
 (define grimmory-shepherd-service
   (shepherd-service
     (provision '(grimmory-librarian))
-    (documentation "Grimmory Library Metadata Organizer Daemon active")
+    (documentation "Grimmory Library Metadata Organizer Clojure-Babashka Daemon active")
     (requirement '(networking))
     (start #~(make-forkexec-constructor
-              (list (string-append #$python "/bin/python3")
-                    "/var/lib/grimmory/librarian.py")
+              (list (string-append #$babashka "/bin/bb")
+                    "babashka/container.clj" "run")
               #:environment-variables
               (list "GEMINI_API_KEY=your-api-key-here")
-              #:directory "/var/lib/grimmory"
+              #:directory "/var/lib/grimmory-web"
               #:user "root"))
     (stop #~(make-kill-destructor))))
 ```
@@ -220,24 +237,23 @@ echo 'export GEMINI_API_KEY="your-api-key-here"' >> ~/.bashrc
 
 To deploy the daemon as an automated systemd timer:
 
-1. Copy the customized `librarian.py` from the Web UI to your executable workspace:
+1. Position the compiled Grimmory folder inside your chosen installation path:
     ```bash
-    sudo mkdir -p /usr/local/bin/grimmory
-    sudo cp librarian.py /usr/local/bin/grimmory/librarian.py
-    sudo chmod +x /usr/local/bin/grimmory/librarian.py
+    sudo mkdir -p /var/lib/grimmory-web
+    sudo cp -r . /var/lib/grimmory-web
     ```
 
 2. Register the service module in `/etc/systemd/system/grimmory-librarian.service`:
     ```ini
     [Unit]
-    Description=Grimmory Library Metadata Organizer Daemon
+    Description=Grimmory Library Metadata Organizer Service
     After=network.target
 
     [Service]
     Type=simple
     User=root
-    WorkingDirectory=/usr/local/bin/grimmory
-    ExecStart=/usr/bin/python3 /usr/local/bin/grimmory/librarian.py
+    WorkingDirectory=/var/lib/grimmory-web
+    ExecStart=/usr/bin/bb babashka/container.clj run
     Environment=GEMINI_API_KEY=your-api-key-here
     Restart=on-failure
     RestartSec=30s

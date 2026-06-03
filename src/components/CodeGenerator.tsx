@@ -3,8 +3,6 @@ import { Copy, Check, Download, Settings, RefreshCw, AlertCircle, Sparkles } fro
 import { SystemdOptions } from "../types";
 
 export default function CodeGenerator() {
-  const [copied, setCopied] = useState(false);
-  const [copiedNix, setCopiedNix] = useState(false);
   const [errorMess, setErrorMess] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -83,40 +81,160 @@ export default function CodeGenerator() {
     }
   };
 
-  const [pythonCode, setPythonCode] = useState("");
+  const [babashkaCode, setBabashkaCode] = useState("");
+  const [activeOutputTab, setActiveOutputTab] = useState<"nixos" | "babashka">("nixos");
+  const [copiedState, setCopiedState] = useState(false);
 
   useEffect(() => {
-    const code = `#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""
-Grimmory Standalone Library Agent - Python Version
-Automatically generated according to config preferences.
+    const clj = `#!/usr/bin/env bb
+;; =============================================================================
+;; Grimmory Library Supervisor Daemon - Clojure Babashka Edition
+;; Matches parameters customized in your Grimmory Admin Console.
+;; =============================================================================
 
-Prerequisites pip:
-  pip install google-genai opencv-python pillow pytesseract ebooklib beautifulsoup4 pypdf
-"""
-import os, sys, re, json, time, sqlite3, shutil, urllib.request, urllib.parse
-from PIL import Image
+(ns grimmory.librarian
+  (:require [babashka.http-client :as http]
+            [cheshire.core :as json]
+            [clojure.java.io :as io]
+            [clojure.string :as str]
+            [clojure.java.shell :refer [sh]]))
 
-INPUT_DIRS = ${JSON.stringify(options.inputDirs || ["/var/lib/grimmory/input"])}
-OUTPUT_DIR = ${JSON.stringify(options.outputDir)}
-DESTINATION_TEMPLATE = ${JSON.stringify(options.destinationTemplate || "{Author} - {Title} ({Year})")}
-CONFIDENCE_THRESHOLD = ${options.confidenceThreshold}
-GEMINI_MODEL = ${JSON.stringify(options.geminiModel)}
+;; --- Configured Parameters ---
+(def input-dirs ${JSON.stringify(options.inputDirs || ["/var/lib/grimmory/input"])})
+(def output-dir "${options.outputDir}")
+(def destination-template "${options.destinationTemplate || "{Author} - {Title} ({Year})"}")
+(def confidence-threshold ${options.confidenceThreshold})
+(def gemini-model "${options.geminiModel}")
+(def enable-caching? ${options.enableCaching !== false ? "true" : "false"})
+(def auto-cleanup? ${options.autoCleanup === true ? "true" : "false"})
+
+;; --- Persistent State Cache ---
+(def db-path "/var/lib/grimmory-web/data/state.json")
+
+(defn load-state []
+  (if (.exists (io/file db-path))
+    (try (json/parse-string (slurp db-path) true)
+         (catch Exception _ {}))
+    {}))
+
+(defn save-state! [state]
+  (spit db-path (json/generate-string state {:pretty true})))
+
+(defn query-google-books [isbn]
+  (println (str "🔍 [Librarian] Seeking ISBN match: " isbn))
+  (let [clean-isbn (str/replace isbn #"\\D" "")
+        url (str "https://www.googleapis.com/books/v1/volumes?q=isbn:" clean-isbn)]
+    (try
+      (let [resp (http/get url {:headers {"User-Agent" "Grimmory-Babashka/1.0"}})
+            body (json/parse-string (:body resp) true)]
+        (if (and (> (:totalItems body) 0) (:items body))
+          (let [volume-info (-> body :items first :volumeInfo)
+                author (str/join ", " (:authors volume-info))
+                title (:title volume-info)
+                pub-date (:publishedDate volume-info)
+                year (and pub-date (re-find #"\\d{4}" pub-date))]
+            {:author (or author "Unknown Author")
+             :title (or title "Unknown Title")
+             :year (if year (Integer/parseInt year) nil)
+             :genre (or (first (:categories volume-info)) "General Study")
+             :isbn clean-isbn
+             :confidence 100
+             :notes "Matched from Google Books API using Clojure Babashka Client."})
+          nil))
+      (catch Exception e
+        (println "⚠️ Google Books lookup failure: " (.getMessage e))
+        nil))))
+
+(defn run-ocr [file-path]
+  (println "📝 [Librarian] Translating layout using local tesseract CLI: " file-path)
+  (let [output-base (str file-path "-tmp-txt")
+        result (sh "tesseract" file-path output-base "-l" "eng+ukr")]
+    (if (zero? (:exit result))
+      (let [txt-file (io/file (str output-base ".txt"))
+            txt-content (slurp txt-file)]
+        (io/delete-file txt-file true)
+        txt-content)
+      "")))
+
+(defn extract-via-gemini [text]
+  (let [api-key (System/getenv "GEMINI_API_KEY")]
+    (if (str/blank? api-key)
+      (throw (Exception. "GEMINI_API_KEY env is required."))
+      (let [url (str "https://generativelanguage.googleapis.com/v1beta/models/" gemini-model ":generateContent?key=" api-key)
+            system-prompt "Act as the Grimmory Library Metadata Agent. Extract: author, title, year, genre, isbn. Return JSON: {author, title, year, genre, isbn, confidence, notes}."
+            payload {:contents [{:parts [{:text (subs text 0 (min (count text) 4000))}]}]
+                     :systemInstruction {:parts [{:text system-prompt}]}
+                     :generationConfig {:responseMimeType "application/json"}}
+            resp (http/post url {:headers {"Content-Type" "application/json"}
+                                 :body (json/generate-string payload)})
+            body (json/parse-string (:body resp) true)
+            text-response (-> body :candidates first :content :parts first :text)]
+        (json/parse-string text-response true)))))
+
+(defn sanitize [s]
+  (str/replace (str/trim s) #"[/\\\\?%*:|\\\"<>\s]+" " "))
+
+(defn compute-destination [meta]
+  (let [author (or (:author meta) "Unknown Author")
+        title (or (:title meta) "Unknown Title")
+        year (if (:year meta) (str (:year meta)) "Unknown Year")
+        genre (or (:genre meta) "Uncategorized")
+        isbn (or (:isbn meta) "No ISBN")
+        path-name (-> destination-template
+                      (str/replace "{Author}" author)
+                      (str/replace "{Title}" title)
+                      (str/replace "{Year}" year)
+                      (str/replace "{Genre}" genre)
+                      (str/replace "{ISBN}" isbn))
+        sanitized-path-name (sanitize path-name)]
+    (str sanitized-path-name)))
+
+(defn process-book [file-path]
+  (println "📖 Processing publication: " file-path)
+  (let [ocr-text (run-ocr file-path)
+        isbn-match (re-find #"(?:ISBN[- ]?)?(?:97[89][- ]?)?\\\\d{1,5}[- ]?\\\\d{1,7}[- ]?\\\\d{1,7}[- ]?[\\\\dX]" ocr-text)
+        metadata (or (and isbn-match (query-google-books isbn-match))
+                     (extract-via-gemini ocr-text))]
+    (if (and metadata (>= (or (:confidence metadata) 0) confidence-threshold))
+      (let [dest-name (compute-destination metadata)
+            ext (or (re-find #"\\.[a-zA-Z0-9]+$" file-path) ".pdf")
+            final-dest (str output-dir "/" dest-name ext)]
+        (println "✨ Metadata Resolved! confidence=" (:confidence metadata))
+        (println "🚚 Relocating to: " final-dest)
+        (io/make-parents final-dest)
+        (io/copy (io/file file-path) (io/file final-dest))
+        (when auto-cleanup?
+          (io/delete-file (io/file file-path) true))
+        {:status "completed" :meta metadata :destination final-dest})
+      (do
+        (println "❌ Metadata extraction did not meet confidence threshold.")
+        {:status "failed" :reason "Low confidence"}))))
+
+(defn -main []
+  (println "================================================")
+  (println "🤖 Grimmory Clojure Babashka-Librarian Daemon Live")
+  (println "================================================")
+  (let [state (load-state)
+        files (filter #(and (.isFile %) (re-find #"\\.(pdf|epub|djvu)$" (.getName %)))
+                      (mapcat #(.listFiles (io/file %)) input-dirs))]
+    (doseq [file files]
+      (let [path (.getAbsolutePath file)]
+        (if (and enable-caching? (= (get-in state [path :status]) "completed"))
+          (println "⏭️ Skipping cached file: " path)
+          (let [res (process-book path)]
+            (save-state! (assoc state path res)))))))
+  (println "✅ [Librarian] Library scanning successfully completed."))
+
+(when (= *file* (System/getProperty "babashka.file"))
+  (-main))
 `;
-    setPythonCode(code);
+    setBabashkaCode(clj);
   }, [options]);
 
-  const handleCopyPython = () => {
-    navigator.clipboard.writeText(pythonCode);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleCopyNix = () => {
-    navigator.clipboard.writeText(nixConfigString);
-    setCopiedNix(true);
-    setTimeout(() => setCopiedNix(false), 2000);
+  const handleCopyCode = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedState(true);
+    setTimeout(() => setCopiedState(false), 2000);
   };
 
   const nixConfigString = `# /etc/nixos/configuration.nix
@@ -403,37 +521,73 @@ GEMINI_MODEL = ${JSON.stringify(options.geminiModel)}
         </button>
       </form>
 
-      {/* Decorative Tab / NixOS instructions panel */}
-      <div className="bg-[#0B0B09] border border-white/5 rounded-xl p-5 md:p-6 text-left flex flex-col gap-4 font-mono text-xs">
-        <div className="flex items-center justify-between border-b border-white/5 pb-2">
-          <span className="text-sm uppercase tracking-widest text-[#C4A47C] flex items-center gap-2 font-bold select-none">
-            <Sparkles className="w-4 h-4 text-[#C4A47C]" />
-            NixOS Declarative Service Integration
+      {/* Decorative Tab / Multiple System Deployments panel */}
+      <div className="bg-[#0B0B09] border border-white/5 rounded-xl p-5 md:p-6 text-left flex flex-col gap-4 font-mono text-xs" id="daemon-deployments-box">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-white/5 pb-3 gap-3">
+          <div className="flex flex-col gap-1">
+            <span className="text-sm uppercase tracking-widest text-[#C4A47C] flex items-center gap-2 font-bold select-none">
+              <Sparkles className="w-4 h-4 text-[#C4A47C]" />
+              Daemon Deployment Outputs & Guides
+            </span>
+            <p className="text-[10px] text-white/40 normal-case font-sans">
+              Choose your target daemon environment to manage scheduled folder scanning.
+            </p>
+          </div>
+          
+          <div className="flex items-center gap-1 bg-white/5 p-1 rounded-lg border border-white/10 self-start">
+            {[
+              { id: "nixos", label: "NixOS Config" },
+              { id: "babashka", label: "Clojure Babashka" }
+            ].map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => {
+                  setActiveOutputTab(tab.id as any);
+                  setCopiedState(false);
+                }}
+                className={`px-2 py-1 rounded text-[10px] font-semibold transition-all cursor-pointer ${
+                  activeOutputTab === tab.id
+                    ? "bg-[#C4A47C] text-[#0D0D0B]"
+                    : "text-white/40 hover:text-white hover:bg-white/5"
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between text-[11px] text-white/50 bg-black/30 p-2.5 rounded border border-white/5 font-sans">
+          <span>
+            {activeOutputTab === "nixos" && "Declarative NixOS configuration module with automated systemd background services."}
+            {activeOutputTab === "babashka" && "High-performance Clojure script running on the lightweight Babashka (bb) interpreter."}
           </span>
           <button
-            onClick={handleCopyNix}
-            className="text-white/40 hover:text-white transition-all text-[10px] flex items-center gap-1 cursor-pointer bg-white/5 px-2 py-1 rounded border border-white/10"
+            onClick={() => {
+              const code = 
+                activeOutputTab === "nixos" ? nixConfigString : babashkaCode;
+              handleCopyCode(code);
+            }}
+            className="text-white/40 hover:text-white transition-all text-[10px] flex items-center gap-1.5 cursor-pointer bg-white/5 px-2.5 py-1 rounded border border-white/10 shrink-0 select-none ml-4"
           >
-            {copiedNix ? (
+            {copiedState ? (
               <>
                 <Check className="w-3.5 h-3.5 text-emerald-400" />
-                <span>COPIED MODULE!</span>
+                <span>COPIED!</span>
               </>
             ) : (
               <>
                 <Copy className="w-3.5 h-3.5" />
-                <span>COPY NIX</span>
+                <span>COPY CODE</span>
               </>
             )}
           </button>
         </div>
 
-        <p className="text-[11px] leading-relaxed text-white/50 font-sans">
-          To manage deployment, simply bind the package parameters inside your declarative <code className="text-[#C4A47C] font-mono">/etc/nixos/configuration.nix</code>. This establishes standard systemd service channels and ports, leaving setup entirely automatic post-rebuild!
-        </p>
-
-        <pre className="bg-[#121210] p-4 rounded-lg overflow-x-auto text-[11px] leading-relaxed border border-white/5 text-[#C4A47C]">
-          {nixConfigString}
+        <pre className="bg-[#121210] p-4 rounded-lg overflow-x-auto text-[11px] leading-relaxed border border-white/5 text-[#C4A47C] max-h-[480px] overflow-y-auto font-mono">
+          {activeOutputTab === "nixos" && nixConfigString}
+          {activeOutputTab === "babashka" && babashkaCode}
         </pre>
       </div>
 

@@ -1,0 +1,11 @@
+{:paths ["src/clojure" "src/cljs" "babashka"]
+ :deps {cheshire/cheshire {:mvn/version "5.13.0"}
+        org.babashka/http-client {:mvn/version "0.4.20"}}
+ :tasks
+ {;; Task to run the Babashka-native microserver
+  server {:doc "Launch backend Clojure web server via Babashka"
+          :task (clojure "-m" "grimmory.server")}
+
+  ;; Task to run the metadata scanning daemon loop
+  daemon {:doc "Start metadata polling daemon on monitored folders"
+          :task (clojure "-m" "grimmory.librarian")}}}
