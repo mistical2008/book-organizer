@@ -665,7 +665,7 @@ async function startServer() {
   app.use(express.json());
 
   // Google Gemini Extract API Proxy endpoint
-  app.post(["/api/grimmory/extract", "/api/librarian/extract"], async (req, res) => {
+  app.post("/api/librarian/extract", async (req, res) => {
     try {
       const { ocrText, modelName } = req.body;
       if (!ocrText) {

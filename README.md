@@ -42,7 +42,15 @@ The core full-stack backend engine is powered by **Clojure & Babashka** (`src/cl
 
 ## 🛠️ Step-by-Step Setup Instructions
 
-### 1. Prerequisite Packages Installation
+### 1. Clone the Repository
+
+Clone the official repository to your system:
+```bash
+git clone https://github.com/mistical2008/book-organizer.git
+cd book-organizer
+```
+
+### 2. Prerequisite Packages Installation
 
 Make sure your machine has native document encoders and OCR packages installed:
 
@@ -182,7 +190,7 @@ sudo pacman -S tesseract tesseract-data-eng poppler djvulibre nodejs npm python 
 ```
 
 ##### B. Running the Daemon Services via systemd
-Once your dependencies are in place, copy your script, populate `/etc/systemd/system/librarian.service` (see Section 3 below), and activate your timer:
+Once your dependencies are in place, copy your script, populate `/etc/systemd/system/librarian.service` (see Section 4 below), and activate your timer:
 
 ```bash
 # Reload systemd config
@@ -194,7 +202,7 @@ sudo systemctl enable --now librarian.timer
 
 ---
 
-### 2. Configure Your GEMINI API Key
+### 3. Configure Your GEMINI API Key
 
 To run AI categorization fallbacks, ensure the `GEMINI_API_KEY` is loaded inside your context shell environment:
 
@@ -208,7 +216,7 @@ echo 'export GEMINI_API_KEY="your-api-key-here"' >> ~/.bashrc
 
 ---
 
-### 3. Service Daemon Deployment (Systemd)
+### 4. Service Daemon Deployment (Systemd)
 
 To deploy the daemon as an automated systemd timer:
 

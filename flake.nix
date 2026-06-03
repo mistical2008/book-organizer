@@ -127,7 +127,7 @@
                   Type = "simple";
                   User = "root"; # Needed to read and write any scanning source folders configured in web app
                   WorkingDirectory = cfg.stateDir;
-                  ExecStart = "${pkgs.nodejs_20}/bin/node \${cfg.stateDir}/dist/server.cjs";
+                  ExecStart = "${pkgs.nodejs_20}/bin/node ${cfg.stateDir}/dist/server.cjs";
                   Restart = "on-failure";
                   EnvironmentFiles = lib.optional (cfg.apiKeyFile != null) cfg.apiKeyFile;
                 };

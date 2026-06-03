@@ -4,8 +4,8 @@
  :tasks
  {;; Task to run the Babashka-native microserver
   server {:doc "Launch backend Clojure web server via Babashka"
-          :task (clojure "-m" "grimmory.server")}
+          :task (clojure "-m" "librarian.server")}
 
   ;; Task to run the metadata scanning daemon loop
   daemon {:doc "Start metadata polling daemon on monitored folders"
-          :task (clojure "-m" "grimmory.librarian")}}}
+          :task (clojure "-m" "librarian.core")}}}

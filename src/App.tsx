@@ -9,7 +9,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<"sandbox" | "generator" | "tester" | "methodology">("sandbox");
 
   return (
-    <div className="min-h-screen bg-[#0D0D0B] text-[#E4E4E0] flex flex-col font-sans transition-all duration-300 antialiased selection:bg-[#C4A47C] selection:text-[#0D0D0B]" id="grimmory-app-root">
+    <div className="min-h-screen bg-[#0D0D0B] text-[#E4E4E0] flex flex-col font-sans transition-all duration-300 antialiased selection:bg-[#C4A47C] selection:text-[#0D0D0B]" id="librarian-app-root">
       {/* Top Navigation / Status Editorial Bar */}
       <nav className="flex flex-col md:flex-row items-center justify-between px-6 md:px-8 py-4 md:h-20 border-b border-white/5 bg-[#0F0F0D] shrink-0 gap-4" id="main-header">
         <div className="flex items-center gap-4">
@@ -168,36 +168,22 @@ export default function App() {
                 <div className="bg-[#0B0B09] p-4 rounded border border-white/10 font-mono text-[10px] leading-relaxed text-white/80 overflow-x-auto select-all">
                   <pre>{`inputs = {
   nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-  grimmory.url = "git+https://your-repo-address/grimmory.git"; # Replace with your repo address
+  librarian.url = "github:mistical2008/book-organizer";
 };`}</pre>
                 </div>
 
                 <span className="text-[9px] font-mono text-white/40 uppercase tracking-widest block mt-2">Step 2: Include the module in nixosConfigurations and activate</span>
                 <div className="bg-[#0B0B09] p-4 rounded border border-white/10 font-mono text-[10px] leading-relaxed text-white/80 overflow-x-auto select-all">
                   <pre>{`modules = [
-  grimmory.nixosModules.default
+  librarian.nixosModules.default
   ./configuration.nix
 ];
 
 # Then enable the automated librarian daemon and web interface inside configuration.nix:
-services.grimmory = {
-  # 1. Daemon scheduled sorting parameters
-  daemon = {
-    enable = true;
-    inputDir = "/var/lib/grimmory/input";
-    outputDir = "/var/lib/grimmory/sorted";
-    geminiModel = "gemini-3.5-flash";
-    confidenceThreshold = 70;
-    apiKeyFile = "/etc/secrets/gemini-api.env"; # File containing GEMINI_API_KEY="AIzaSy..."
-    interval = "*:0/15";                        # Run metadata sync periodically
-  };
-
-  # 2. Interactive full-stack Node web portal
-  web = {
-    enable = true;
-    port = 3000;
-    apiKeyFile = "/etc/secrets/gemini-api.env";
-  };
+services.librarian = {
+  enable = true;
+  port = 3000;
+  apiKeyFile = "/etc/secrets/gemini-api.env"; # File containing GEMINI_API_KEY="AIzaSy..."
 };`}</pre>
                 </div>
 

@@ -1,0 +1,19 @@
+{
+  "serviceName": "librarian",
+  "userName": "root",
+  "workingDir": "/app/applet",
+  "scriptPath": "/app/applet/dist/server.cjs",
+  "inputDirs": [
+    "/app/applet/data/books_to_sort"
+  ],
+  "outputDir": "/app/applet/data/sorted_library",
+  "destinationTemplate": "{Author} - {Title} ({Year})",
+  "geminiModel": "gemini-3.5-flash",
+  "confidenceThreshold": 70,
+  "runIntervalMs": 600000,
+  "daemonEnabled": false,
+  "processingMode": "batch",
+  "batchSize": 5,
+  "enableCaching": true,
+  "runInterval": "hourly"
+}

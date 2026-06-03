@@ -13,7 +13,7 @@ let
   ]);
 in
 pkgs.mkShell {
-  name = "grimmory-dev-shell";
+  name = "librarian-dev-shell";
 
   buildInputs = [
     # Full-Stack Web Environment
@@ -42,7 +42,7 @@ pkgs.mkShell {
 
     echo ""
     echo "========================================================="
-    echo "  📜 GRIMMORY ENVIRONMENT SHELL FOR NIXOS ACTIVE"
+    echo "  📜 LIBRARIAN ENVIRONMENT SHELL FOR NIXOS ACTIVE"
     echo "========================================================="
     echo " NixOS requires declaring or compiling dependencies."
     echo " We have injected nodejs, npm, tesseract, and python"
