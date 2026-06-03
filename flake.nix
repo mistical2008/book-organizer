@@ -96,123 +96,49 @@
             cfg = config.services.grimmory;
           in {
             options.services.grimmory = {
-              daemon = {
-                enable = lib.mkEnableOption "Grimmory Library Metadata Organizer Automation Daemon";
-                
-                inputDir = lib.mkOption {
-                  type = lib.types.str;
-                  default = "/var/lib/grimmory/input";
-                  description = "Input folder monitored for unorganized scanned book binaries (.pdf, .epub, .djvu).";
-                };
-
-                outputDir = lib.mkOption {
-                  type = lib.types.str;
-                  default = "/var/lib/grimmory/sorted";
-                  description = "Destination parent directory where sorted books get organized into catalogued indices.";
-                };
-
-                geminiModel = lib.mkOption {
-                  type = lib.types.str;
-                  default = "gemini-3.5-flash";
-                  description = "Target Gemini LLM core to run when confidence thresholds decline.";
-                };
-
-                confidenceThreshold = lib.mkOption {
-                  type = lib.types.int;
-                  default = 70;
-                  description = "Under this score, the daemon scale queries from thin slices (2 pages) up to 10 pages.";
-                };
-
-                apiKeyFile = lib.mkOption {
-                  type = lib.types.nullOr lib.types.path;
-                  default = null;
-                  description = "File path containing the secure GEMINI_API_KEY environment variable.";
-                };
-
-                interval = lib.mkOption {
-                  type = lib.types.str;
-                  default = "*:0/15"; # Every 15 minutes
-                  description = "Systemd OnCalendar timer interval expression.";
-                };
+              enable = lib.mkEnableOption "Grimmory Library Metadata Organizer Portal & integrated Daemon";
+              
+              port = lib.mkOption {
+                type = lib.types.port;
+                default = 3000;
+                description = "Address port where the local reverse proxy links.";
               };
 
-              web = {
-                enable = lib.mkEnableOption "Grimmory Portal UI Full-Stack Node Web Application";
-                
-                port = lib.mkOption {
-                  type = lib.types.port;
-                  default = 3000;
-                  description = "Address port where the local reverse proxy links.";
-                };
+              apiKeyFile = lib.mkOption {
+                type = lib.types.nullOr lib.types.path;
+                default = null;
+                description = "File path containing the secure GEMINI_API_KEY environment variable.";
+              };
 
-                apiKeyFile = lib.mkOption {
-                  type = lib.types.nullOr lib.types.path;
-                  default = null;
-                  description = "File path containing the secure GEMINI_API_KEY for server-bound requests.";
-                };
+              stateDir = lib.mkOption {
+                type = lib.types.str;
+                default = "/var/lib/grimmory-web";
+                description = "State directory where the database, config, sorted, and uploaded books are located.";
               };
             };
 
-            config = lib.mkMerge [
-              # Optional configuration for automated daemon service
-              (lib.mkIf cfg.daemon.enable {
-                systemd.services.grimmory-daemon = {
-                  description = "Grimmory Automatic metadata directory sync background service";
-                  after = [ "network.target" ];
-                  
-                  serviceConfig = {
-                    Type = "oneshot";
-                    User = "root";
-                    ExecStart = ''
-                      ${pkgs.writers.writePython3Bin "grimmory-librarian-run" {
-                        libraries = with pkgs.python3Packages; [ pillow pytesseract beautifulsoup4 pypdf opencv4 ];
-                      } (builtins.readFile ./src/components/CodeGenerator.tsx)}/bin/grimmory-librarian-run \
-                        --input "${cfg.daemon.inputDir}" \
-                        --output "${cfg.daemon.outputDir}" \
-                        --model "${cfg.daemon.geminiModel}" \
-                        --threshold "${toString cfg.daemon.confidenceThreshold}"
-                    '';
-                    EnvironmentFiles = lib.optional (cfg.daemon.apiKeyFile != null) cfg.daemon.apiKeyFile;
-                  };
+            config = lib.mkIf cfg.enable {
+              systemd.services.grimmory = {
+                description = "Grimmory Interactive Portal & Integrated Background Sync Daemon";
+                after = [ "network.target" ];
+                wantedBy = [ "multi-user.target" ];
 
-                  environment = {
-                    TESSDATA_PREFIX = "${pkgs.tesseract-ocr-eng}/share/tessdata:${pkgs.tesseract-ocr-ukr}/share/tessdata";
-                  };
+                serviceConfig = {
+                  Type = "simple";
+                  User = "root"; # Needed to read and write any scanning source folders configured in web app
+                  WorkingDirectory = cfg.stateDir;
+                  ExecStart = "${pkgs.nodejs_20}/bin/node ${cfg.stateDir}/dist/server.cjs";
+                  Restart = "on-failure";
+                  EnvironmentFiles = lib.optional (cfg.apiKeyFile != null) cfg.apiKeyFile;
                 };
 
-                systemd.timers.grimmory-daemon = {
-                  description = "Timer trigger for Grimmory Library metadata daemon sync frequency";
-                  wantedBy = [ "timers.target" ];
-                  timerConfig = {
-                    OnCalendar = cfg.daemon.interval;
-                    Persistent = true;
-                  };
+                environment = {
+                  PORT = toString cfg.port;
+                  NODE_ENV = "production";
+                  TESSDATA_PREFIX = "${pkgs.tesseract-ocr-eng}/share/tessdata:${pkgs.tesseract-ocr-ukr}/share/tessdata";
                 };
-              })
-
-              # Optional configuration for web portal service
-              (lib.mkIf cfg.web.enable {
-                systemd.services.grimmory-web = {
-                  description = "Grimmory Interactive Portal Web Server";
-                  after = [ "network.target" ];
-                  wantedBy = [ "multi-user.target" ];
-
-                  serviceConfig = {
-                    Type = "simple";
-                    User = "nobody";
-                    WorkingDirectory = "/var/lib/grimmory-web";
-                    ExecStart = "${pkgs.nodejs_20}/bin/node /var/lib/grimmory-web/dist/server.cjs";
-                    Restart = "on-failure";
-                    EnvironmentFiles = lib.optional (cfg.web.apiKeyFile != null) cfg.web.apiKeyFile;
-                  };
-
-                  environment = {
-                    PORT = toString cfg.web.port;
-                    NODE_ENV = "production";
-                  };
-                };
-              })
-            ];
+              };
+            };
           };
       };
 }

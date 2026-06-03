@@ -179,14 +179,25 @@ export default function App() {
   ./configuration.nix
 ];
 
-# Then enable the automated librarian daemon inside configuration.nix:
-services.grimmory.daemon = {
-  enable = true;
-  inputDir = "/var/lib/grimmory/input";
-  outputDir = "/var/lib/grimmory/sorted";
-  geminiModel = "gemini-3.5-flash";
-  apiKeyFile = "/etc/secrets/gemini-api.env"; # File containing GEMINI_API_KEY="AIzaSy..."
-  interval = "*:0/15"; # Run metadata sync every 15 minutes
+# Then enable the automated librarian daemon and web interface inside configuration.nix:
+services.grimmory = {
+  # 1. Daemon scheduled sorting parameters
+  daemon = {
+    enable = true;
+    inputDir = "/var/lib/grimmory/input";
+    outputDir = "/var/lib/grimmory/sorted";
+    geminiModel = "gemini-3.5-flash";
+    confidenceThreshold = 70;
+    apiKeyFile = "/etc/secrets/gemini-api.env"; # File containing GEMINI_API_KEY="AIzaSy..."
+    interval = "*:0/15";                        # Run metadata sync periodically
+  };
+
+  # 2. Interactive full-stack Node web portal
+  web = {
+    enable = true;
+    port = 3000;
+    apiKeyFile = "/etc/secrets/gemini-api.env";
+  };
 };`}</pre>
                 </div>
 

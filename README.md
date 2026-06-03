@@ -112,38 +112,17 @@ pkgs.mkShell {
 Run `nix-shell` inside this folder to drop into the isolated terminal environment.
 
 ##### B. Declarative Configuration System Module
-Add the dependencies and service configuration to `/etc/nixos/configuration.nix`:
+Add the modern unified service configuration to `/etc/nixos/configuration.nix`:
 
 ```nix
 { config, pkgs, ... }: {
-  # Add native packages to system profile
-  environment.systemPackages = with pkgs; [
-    tesseract
-    tesseract-ocr-eng
-    tesseract-ocr-ukr
-    poppler_utils
-    djvulibre
-  ];
-
-  # Define declarative systemd service matching Grimmory's custom Clojure daemon
-  systemd.services.grimmory-librarian = {
-    description = "Grimmory Library Metadata Organizer Clojure Daemon";
-    after = [ "network.target" ];
-    wantedBy = [ "multi-user.target" ];
-    path = with pkgs; [ tesseract poppler_utils djvulibre babashka clojure ];
+  # Enable the Grimmory Web Portal with its background monitoring daemon
+  services.grimmory = {
+    enable = true;
+    port = 3000;
     
-    environment = {
-      GEMINI_API_KEY = "your-api-key-here";
-    };
-
-    serviceConfig = {
-      Type = "simple";
-      User = "root";
-      WorkingDirectory = "/var/lib/grimmory-web";
-      ExecStart = "${pkgs.babashka}/bin/bb babashka/container.clj run";
-      Restart = "on-failure";
-      RestartSec = "30s";
-    };
+    # Secure API credentials configuration path file (contains GEMINI_API_KEY="...")
+    apiKeyFile = "/etc/secrets/gemini-api.env";
   };
 }
 ```

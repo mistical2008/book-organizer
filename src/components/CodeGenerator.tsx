@@ -21,7 +21,8 @@ export default function CodeGenerator() {
     processingMode: "batch",
     batchSize: 5,
     enableCaching: true,
-    daemonEnabled: false
+    daemonEnabled: false,
+    geminiApiKey: ""
   });
 
   // Fetch config from server on mount
@@ -244,22 +245,16 @@ export default function CodeGenerator() {
     inputs.grimmory.nixosModules.default
   ];
 
+  # Enable the Grimmory Portal & its integrated library monitoring daemon.
+  # All configuration (input folders, destination structures, intervals, and fallback models)
+  # is customized dynamically and persisted directly in the web administration UI.
   services.grimmory = {
-    # 1. Daemon scheduled sorting parameters
-    daemon = {
-      enable = ${options.daemonEnabled ? "true" : "false"};
-      inputDir = "${options.inputDirs ? options.inputDirs[0] : "/var/lib/grimmory/input"}";
-      outputDir = "${options.outputDir}";
-      geminiModel = "${options.geminiModel}";
-      confidenceThreshold = ${options.confidenceThreshold};
-      interval = "${options.runInterval === "hourly" ? "*:0/15" : "daily"}";
-    };
-
-    # 2. Interactive full-stack Node web portal
-    web = {
-      enable = true;
-      port = 3000;
-    };
+    enable = true;
+    port = 3000;
+    
+    # (Optional) Provide a secure credentials environment file containing the GEMINI_API_KEY.
+    # Alternatively, config.json is saved dynamically through the Web Settings GUI.
+    apiKeyFile = "/etc/secrets/gemini-api.env";
   };
 }`;
 
@@ -435,6 +430,18 @@ export default function CodeGenerator() {
               <option value="gemini-3.5-flash">gemini-3.5-flash (Recommended)</option>
               <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Paid)</option>
             </select>
+          </div>
+
+          <div className="flex flex-col gap-1 text-left">
+            <label className="text-[10px] font-mono text-white/40 tracking-wider uppercase">Gemini API Key (API Ключ)</label>
+            <input
+              type="password"
+              placeholder="AIzaSy... (empty for environment default)"
+              className="bg-[#121210] border border-white/10 text-xs px-3 py-2 rounded focus:outline-none focus:border-[#C4A47C]/50 text-[#C4A47C] font-mono"
+              value={options.geminiApiKey || ""}
+              onChange={(e) => setOptions({ ...options, geminiApiKey: e.target.value })}
+              id="gemini-apikey-setting"
+            />
           </div>
 
           <div className="flex flex-col gap-1 text-left">

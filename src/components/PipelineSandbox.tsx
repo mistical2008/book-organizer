@@ -81,8 +81,6 @@ export default function PipelineSandbox() {
   const [activePreset, setActivePreset] = useState<PresetBook>(PRESET_BOOKS[0]);
   const [writingCustom, setWritingCustom] = useState(false);
 
-  // Terminal autoscroll ref
-  const logEndRef = useRef<HTMLDivElement>(null);
 
   // Polling helper
   const pollServerState = async () => {
@@ -145,12 +143,6 @@ export default function PipelineSandbox() {
     return () => clearInterval(interval);
   }, [isProcessing]);
 
-  // Scroll to bottom of terminal when logs expand
-  useEffect(() => {
-    if (logEndRef.current) {
-      logEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [pipelineLogs]);
 
   const handleTriggerSync = async () => {
     if (isProcessing) return;
@@ -588,7 +580,7 @@ export default function PipelineSandbox() {
                 </div>
               ))
             )}
-            <div ref={logEndRef} />
+
           </div>
         </div>
       </div>

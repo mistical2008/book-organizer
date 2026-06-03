@@ -88,7 +88,8 @@ function initFilesystem() {
     daemonEnabled: false,
     processingMode: "batch",
     batchSize: 5,
-    enableCaching: true
+    enableCaching: true,
+    geminiApiKey: ""
   };
 
   if (!fs.existsSync(CONFIG_FILE)) {
@@ -191,9 +192,20 @@ function queryGoogleBooksByIsbn(isbn: string): Promise<any> {
 }
 
 async function extractMetadataViaGemini(ocrText: string, modelName: string): Promise<any> {
-  const apiKey = process.env.GEMINI_API_KEY;
+  let apiKey = undefined;
+  try {
+    if (fs.existsSync(CONFIG_FILE)) {
+      const config = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
+      apiKey = config.geminiApiKey;
+    }
+  } catch (e) {}
+
   if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is not defined inside environmental configuration.");
+    apiKey = process.env.GEMINI_API_KEY;
+  }
+
+  if (!apiKey) {
+    throw new Error("GEMINI_API_KEY is not defined. Please customize your Gemini API Key in the Daemon settings or define it in your environment.");
   }
 
   const ai = new GoogleGenAI({
@@ -232,36 +244,108 @@ RULES:
     required: ["author", "title", "year", "genre", "isbn", "confidence", "notes"]
   };
 
-  const initialText = thinOcr(ocrText);
-  const response = await ai.models.generateContent({
-    model: modelName,
-    contents: initialText,
-    config: {
-      systemInstruction,
-      responseMimeType: "application/json",
-      responseSchema,
-      temperature: 0.1,
-    }
-  });
+  const modelsToTry = [modelName];
+  if (modelName !== "gemini-3.1-flash-lite") {
+    modelsToTry.push("gemini-3.1-flash-lite");
+  }
+  if (!modelsToTry.includes("gemini-flash-latest")) {
+    modelsToTry.push("gemini-flash-latest");
+  }
 
-  const responseText = response.text || "{}";
-  let data = JSON.parse(responseText.trim());
+  let finalResponseText = "{}";
+  let activeModelUsed = modelName;
+  let success = false;
+  let lastError: any = null;
+
+  const initialText = thinOcr(ocrText);
+
+  for (const currentModel of modelsToTry) {
+    let attempts = 2;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        if (currentModel !== modelName) {
+          addServerLog(`Trying robust fallback model: ${currentModel} (attempt ${attempt}/${attempts})`);
+        } else if (attempt > 1) {
+          addServerLog(`Retrying ${currentModel} after transient failure (attempt ${attempt}/${attempts})...`);
+        }
+
+        const response = await ai.models.generateContent({
+          model: currentModel,
+          contents: initialText,
+          config: {
+            systemInstruction,
+            responseMimeType: "application/json",
+            responseSchema,
+            temperature: 0.1,
+          }
+        });
+
+        finalResponseText = response.text || "{}";
+        activeModelUsed = currentModel;
+        success = true;
+        break;
+      } catch (err: any) {
+        lastError = err;
+        const errMsg = err?.message || String(err);
+        const isTransient = errMsg.includes("503") || errMsg.includes("UNAVAILABLE") || errMsg.includes("limit") || errMsg.includes("demand");
+        
+        addServerLog(`[Warning] Model ${currentModel} (attempt ${attempt}) failed: ${errMsg}`);
+        
+        if (isTransient && attempt < attempts) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          continue;
+        } else {
+          break;
+        }
+      }
+    }
+    if (success) {
+      break;
+    }
+  }
+
+  if (!success) {
+    throw lastError || new Error("All models in cascade sequence failed to return metadata.");
+  }
+
+  let data = JSON.parse(finalResponseText.trim());
 
   if (data.confidence < 70 && ocrText.length > 4000) {
-    addServerLog(`Confidence returned low (${data.confidence}/100). Expanding analysis up to 20,000 characters...`);
+    addServerLog(`Confidence returned low (${data.confidence}/100) using ${activeModelUsed}. Expanding analysis up to 20,000 characters...`);
     const expandedText = ocrText.replace(/\s+/g, ' ').substring(0, 20000);
-    const secondResponse = await ai.models.generateContent({
-      model: modelName,
-      contents: expandedText,
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema,
-        temperature: 0.1,
+    
+    let secondSuccess = false;
+    for (const currentModel of [activeModelUsed, ...modelsToTry.filter(m => m !== activeModelUsed)]) {
+      let attempts = 2;
+      for (let attempt = 1; attempt <= attempts; attempt++) {
+        try {
+          const secondResponse = await ai.models.generateContent({
+            model: currentModel,
+            contents: expandedText,
+            config: {
+              systemInstruction,
+              responseMimeType: "application/json",
+              responseSchema,
+              temperature: 0.1,
+            }
+          });
+
+          const secondResponseText = secondResponse.text || "{}";
+          data = JSON.parse(secondResponseText.trim());
+          secondSuccess = true;
+          break;
+        } catch (err: any) {
+          const errMsg = err?.message || String(err);
+          addServerLog(`[Warning] Expanded text call failed on ${currentModel}: ${errMsg}`);
+          if (attempt < attempts && (errMsg.includes("503") || errMsg.includes("UNAVAILABLE") || errMsg.includes("limit") || errMsg.includes("demand"))) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            continue;
+          }
+          break;
+        }
       }
-    });
-    const secondResponseText = secondResponse.text || "{}";
-    data = JSON.parse(secondResponseText.trim());
+      if (secondSuccess) break;
+    }
   }
 
   return data;
