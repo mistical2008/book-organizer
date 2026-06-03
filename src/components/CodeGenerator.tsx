@@ -8,12 +8,12 @@ export default function CodeGenerator() {
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   const [options, setOptions] = useState<any>({
-    serviceName: "grimmory-librarian",
+    serviceName: "librarian",
     userName: "root",
     workingDir: "/root",
     scriptPath: "/root/server.cjs",
-    inputDirs: ["/var/lib/grimmory/input"],
-    outputDir: "/var/lib/grimmory/sorted",
+    inputDirs: ["/var/lib/librarian/input"],
+    outputDir: "/var/lib/librarian/sorted",
     destinationTemplate: "{Author} - {Title} ({Year})",
     geminiModel: "gemini-3.5-flash",
     confidenceThreshold: 70,
@@ -89,11 +89,11 @@ export default function CodeGenerator() {
   useEffect(() => {
     const clj = `#!/usr/bin/env bb
 ;; =============================================================================
-;; Grimmory Library Supervisor Daemon - Clojure Babashka Edition
-;; Matches parameters customized in your Grimmory Admin Console.
+;; Librarian Library Supervisor Daemon - Clojure Babashka Edition
+;; Matches parameters customized in your Librarian Admin Console.
 ;; =============================================================================
 
-(ns grimmory.librarian
+(ns librarian.core
   (:require [babashka.http-client :as http]
             [cheshire.core :as json]
             [clojure.java.io :as io]
@@ -101,7 +101,7 @@ export default function CodeGenerator() {
             [clojure.java.shell :refer [sh]]))
 
 ;; --- Configured Parameters ---
-(def input-dirs ${JSON.stringify(options.inputDirs || ["/var/lib/grimmory/input"])})
+(def input-dirs ${JSON.stringify(options.inputDirs || ["/var/lib/librarian/input"])})
 (def output-dir "${options.outputDir}")
 (def destination-template "${options.destinationTemplate || "{Author} - {Title} ({Year})"}")
 (def confidence-threshold ${options.confidenceThreshold})
@@ -110,7 +110,7 @@ export default function CodeGenerator() {
 (def auto-cleanup? ${options.autoCleanup === true ? "true" : "false"})
 
 ;; --- Persistent State Cache ---
-(def db-path "/var/lib/grimmory-web/data/state.json")
+(def db-path "/var/lib/librarian-web/data/state.json")
 
 (defn load-state []
   (if (.exists (io/file db-path))
@@ -126,7 +126,7 @@ export default function CodeGenerator() {
   (let [clean-isbn (str/replace isbn #"\\D" "")
         url (str "https://www.googleapis.com/books/v1/volumes?q=isbn:" clean-isbn)]
     (try
-      (let [resp (http/get url {:headers {"User-Agent" "Grimmory-Babashka/1.0"}})
+      (let [resp (http/get url {:headers {"User-Agent" "Librarian-Babashka/1.0"}})
             body (json/parse-string (:body resp) true)]
         (if (and (> (:totalItems body) 0) (:items body))
           (let [volume-info (-> body :items first :volumeInfo)
@@ -162,7 +162,7 @@ export default function CodeGenerator() {
     (if (str/blank? api-key)
       (throw (Exception. "GEMINI_API_KEY env is required."))
       (let [url (str "https://generativelanguage.googleapis.com/v1beta/models/" gemini-model ":generateContent?key=" api-key)
-            system-prompt "Act as the Grimmory Library Metadata Agent. Extract: author, title, year, genre, isbn. Return JSON: {author, title, year, genre, isbn, confidence, notes}."
+            system-prompt "Act as the Librarian Library Metadata Agent. Extract: author, title, year, genre, isbn. Return JSON: {author, title, year, genre, isbn, confidence, notes}."
             payload {:contents [{:parts [{:text (subs text 0 (min (count text) 4000))}]}]
                      :systemInstruction {:parts [{:text system-prompt}]}
                      :generationConfig {:responseMimeType "application/json"}}
@@ -213,7 +213,7 @@ export default function CodeGenerator() {
 
 (defn -main []
   (println "================================================")
-  (println "🤖 Grimmory Clojure Babashka-Librarian Daemon Live")
+  (println "🤖 Librarian Clojure Babashka Daemon Live")
   (println "================================================")
   (let [state (load-state)
         files (filter #(and (.isFile %) (re-find #"\\.(pdf|epub|djvu)$" (.getName %)))
@@ -240,15 +240,15 @@ export default function CodeGenerator() {
 
   const nixConfigString = `# /etc/nixos/configuration.nix
 { config, pkgs, ... }: {
-  # Import Grimmory Flake module
+  # Import Librarian Flake module
   imports = [
-    inputs.grimmory.nixosModules.default
+    inputs.librarian.nixosModules.default
   ];
 
-  # Enable the Grimmory Portal & its integrated library monitoring daemon.
+  # Enable the Librarian Portal & its integrated library monitoring daemon.
   # All configuration (input folders, destination structures, intervals, and fallback models)
   # is customized dynamically and persisted directly in the web administration UI.
-  services.grimmory = {
+  services.librarian = {
     enable = true;
     port = 3000;
     
@@ -320,8 +320,8 @@ export default function CodeGenerator() {
               <button
                 type="button"
                 onClick={() => {
-                  const updated = [...(options.inputDirs || ["/var/lib/grimmory/input"])];
-                  updated.push(`/var/lib/grimmory/input_channel_${updated.length + 1}`);
+                  const updated = [...(options.inputDirs || ["/var/lib/librarian/input"])];
+                  updated.push(`/var/lib/librarian/input_channel_${updated.length + 1}`);
                   setOptions({ ...options, inputDirs: updated });
                 }}
                 className="text-[#C4A47C] text-[10px] font-mono hover:underline uppercase tracking-wider cursor-pointer"
@@ -330,7 +330,7 @@ export default function CodeGenerator() {
               </button>
             </div>
             <div className="flex flex-col gap-2 max-h-36 overflow-y-auto pr-1">
-              {(options.inputDirs || ["/var/lib/grimmory/input"]).map((dir: string, idx: number) => (
+              {(options.inputDirs || ["/var/lib/librarian/input"]).map((dir: string, idx: number) => (
                 <div key={idx} className="flex gap-2 items-center">
                   <span className="text-[10px] font-mono text-white/30 w-4 font-bold">{idx + 1}.</span>
                   <input

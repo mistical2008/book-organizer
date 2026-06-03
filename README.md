@@ -1,14 +1,14 @@
-# Grimmory: Ukrainian Book Cataloger & Folder Sorter 📚
+# Librarian: Book Sorter & Folder Cataloger 📚
 
-Grimmory is a self-deactivating library organization daemon. It recursively scans unstructured folders of digital books (`.pdf`, `.djvu`, `.epub`, `.fb2`, `.mobi`) to sort them into nested directories structured by **`${Author} - ${Title} (${Year})`**.
+Librarian is a self-deactivating library organization daemon. It recursively scans unstructured folders of digital books (`.pdf`, `.djvu`, `.epub`, `.fb2`, `.mobi`) to sort them into nested directories structured by **`${Author} - ${Title} (${Year})`**.
 
-This system implements a transactional, staged data fetching pipeline engineered to stay completely within free API tiers while preventing data loss or redos with durable SQLite state management.
+This system implements a transactional, staged data fetching pipeline engineered to stay completely within free API tiers while preventing data loss or redos with durable SQLite state management. It is designed to work as a general book organizer supporting any language natively.
 
 ---
 
 ## 🏗️ Multi-Table Staging Architecture
 
-The core full-stack backend engine is powered by **Clojure & Babashka** (`src/clojure/grimmory/server.clj` and `babashka/container.clj`) handling the entire folder scanning and book cataloging pipeline. It stores and persists transactional states across structured record registries in `/data/state.json` to isolate side effects:
+The core full-stack backend engine is powered by **Clojure & Babashka** (`src/clojure/librarian/server.clj` and `babashka/container.clj`) handling the entire folder scanning and book cataloging pipeline. It stores and persists transactional states across structured record registries in `/data/state.json` to isolate side effects:
 
 1. **`scanned_books`**: Stores all mapped file scopes with their detected local ISBN tags (if any) to prevent redundant OCR scanning if the service is interrupted.
 2. **`isbn_requests`**: A dedicated queue tracking query records targeting the free **Google Books public API**.
@@ -23,7 +23,7 @@ The core full-stack backend engine is powered by **Clojure & Babashka** (`src/cl
 📂 [Source Directory]
   │
   ├─── Phase 1: Directory Recursion & Pre-Filter Scan
-  │     ├── OCR First 10 Pages (Tesseract UKR/ENG)
+  │     ├── OCR First 10 Pages (Tesseract Multi-lingual engines)
   │     ├── Match ISBN regex patterns
   │     └── Populate scanned_books -> (Queue isbn_requests OR ai_categorization)
   │
@@ -48,9 +48,9 @@ Make sure your machine has native document encoders and OCR packages installed:
 
 #### Ubuntu / Debian Desktop & Server
 ```bash
-# Install Tesseract OCR Engine and language support files (Ukrainian and English)
+# Install Tesseract OCR Engine and language support files (multi-lingual support)
 sudo apt-get update
-sudo apt-get install -y tesseract-ocr tesseract-ocr-ukr tesseract-ocr-eng poppler-utils djvulibre-bin
+sudo apt-get install -y tesseract-ocr tesseract-ocr-all poppler-utils djvulibre-bin
 
 # Install core python libraries
 pip install google-genai opencv-python pillow pytesseract ebooklib beautifulsoup4 pypdf
@@ -65,8 +65,8 @@ For developers wanting a purely functional Lisp stack:
 2. **Clojure CLI Tools**: Ensure you have Clojure and standard JVM runtimes installed to run compilation tasks.
 3. **Project Files Structure**:
    - `bb.edn`: Defines project paths, dependencies (`cheshire`, `org.babashka/http-client`), and daemon launcher shortcuts.
-   - `src/clojure/grimmory/server.clj`: A Ring-compliant, high-performance Clojure server handling API routers, folder scanning, Google Books lookup, and Gemini API bindings.
-   - `src/cljs/grimmory/core.cljs`: Reactive ClojureScript frontend using the Reagent model (Clojure interface layer for React).
+   - `src/clojure/librarian/server.clj`: A Ring-compliant, high-performance Clojure server handling API routers, folder scanning, Google Books lookup, and Gemini API bindings.
+   - `src/cljs/librarian/core.cljs`: Reactive ClojureScript frontend using the Reagent model (Clojure interface layer for React).
    - `babashka/container.clj`: Standalone binary and container execution suite controlling schedules, health verification, and temporary cache sweeps.
 
 To boot the Clojure backend and scheduling agent, simply invoke Babashka:
@@ -85,7 +85,7 @@ bb babashka/container.clj run
 
 #### NixOS (Declarative Module & Development Shell)
 
-For NixOS systems, you can install the required packages on-the-fly using a development shell, or configure the service declarively in your system configurations.
+For NixOS systems, you can install the required packages on-the-fly using a development shell, or configure the service declaratively in your system configurations.
 
 ##### A. Dynamic Shell Environment (`shell.nix`)
 Create a `shell.nix` inside your repository directory to load all native packages and dependency libraries instantly environment-isolated:
@@ -116,8 +116,8 @@ Add the modern unified service configuration to `/etc/nixos/configuration.nix`:
 
 ```nix
 { config, pkgs, ... }: {
-  # Enable the Grimmory Web Portal with its background monitoring daemon
-  services.grimmory = {
+  # Enable the Librarian Web Portal with its background monitoring daemon
+  services.librarian = {
     enable = true;
     port = 3000;
     
@@ -131,17 +131,17 @@ Add the modern unified service configuration to `/etc/nixos/configuration.nix`:
 
 #### GNU Guix (Pure shell Environment & Shepherd Service)
 
-GNU Guix focuses on purely functional package deployment. You can run Grimmory in a isolated container environment, or configure it on a Guix System as a native Shepherd service.
+GNU Guix focuses on purely functional package deployment. You can run Librarian in an isolated container environment, or configure it on a Guix System as a native Shepherd service.
 
 ##### A. Ephemeral Pure Environment (`guix shell`)
 Launch a sandboxed environment containing all native binary wrappers and dependencies with a single command:
 
 ```bash
-guix shell --pure node tesseract tesseract-ukr tesseract-eng poppler djvulibre python python-pillow python-pytesseract python-beautifulsoup4 -- python3 librarian.py
+guix shell --pure node tesseract tesseract-eng poppler djvulibre python python-pillow python-pytesseract python-beautifulsoup4 -- python3 librarian.py
 ```
 
 ##### B. Declarative System Service Configuration
-Declare Grimmory as a custom Shepherd service inside your `/etc/config.scm` boot configuration file:
+Declare Librarian as a custom Shepherd service inside your `/etc/config.scm` boot configuration file:
 
 ```scheme
 (use-modules (gnu services)
@@ -151,17 +151,17 @@ Declare Grimmory as a custom Shepherd service inside your `/etc/config.scm` boot
              (gnu packages python)
              (gnu packages python-xyz))
 
-(define grimmory-shepherd-service
+(define librarian-shepherd-service
   (shepherd-service
-    (provision '(grimmory-librarian))
-    (documentation "Grimmory Library Metadata Organizer Clojure-Babashka Daemon active")
+    (provision '(librarian-daemon))
+    (documentation "Librarian Library Metadata Organizer Clojure-Babashka Daemon active")
     (requirement '(networking))
     (start #~(make-forkexec-constructor
               (list (string-append #$babashka "/bin/bb")
                     "babashka/container.clj" "run")
               #:environment-variables
               (list "GEMINI_API_KEY=your-api-key-here")
-              #:directory "/var/lib/grimmory-web"
+              #:directory "/var/lib/librarian-web"
               #:user "root"))
     (stop #~(make-kill-destructor))))
 ```
@@ -172,28 +172,24 @@ Declare Grimmory as a custom Shepherd service inside your `/etc/config.scm` boot
 
 Arch Linux provides cutting-edge native packages along with community-maintained OCR engines in the Arch User Repository (AUR).
 
-##### A. Install Native Packages from Official Repositories & AUR
+##### A. Install Native Packages from Official Repositories
 Run the package manager to install the runtime dependencies:
 
 ```bash
 # Update mirrors and install core utility packages
 sudo pacman -Syu
 sudo pacman -S tesseract tesseract-data-eng poppler djvulibre nodejs npm python python-pip python-pillow python-beautifulsoup4
-
-# Install Ukrainian Tesseract training data from AUR 
-# (You can use any AUR helper such as yay or paru)
-yay -S tesseract-data-ukr
 ```
 
 ##### B. Running the Daemon Services via systemd
-Once your dependencies are in place, copy your script, populate `/etc/systemd/system/grimmory-librarian.service` (see Section 3 below), and activate your timer:
+Once your dependencies are in place, copy your script, populate `/etc/systemd/system/librarian.service` (see Section 3 below), and activate your timer:
 
 ```bash
 # Reload systemd config
 sudo systemctl daemon-reload
 
 # Activate and start the polling timer
-sudo systemctl enable --now grimmory-librarian.timer
+sudo systemctl enable --now librarian.timer
 ```
 
 ---
@@ -216,32 +212,32 @@ echo 'export GEMINI_API_KEY="your-api-key-here"' >> ~/.bashrc
 
 To deploy the daemon as an automated systemd timer:
 
-1. Position the compiled Grimmory folder inside your chosen installation path:
+1. Position the compiled Librarian folder inside your chosen installation path:
     ```bash
-    sudo mkdir -p /var/lib/grimmory-web
-    sudo cp -r . /var/lib/grimmory-web
+    sudo mkdir -p /var/lib/librarian-web
+    sudo cp -r . /var/lib/librarian-web
     ```
 
-2. Register the service module in `/etc/systemd/system/grimmory-librarian.service`:
+2. Register the service module in `/etc/systemd/system/librarian.service`:
     ```ini
     [Unit]
-    Description=Grimmory Library Metadata Organizer Service
+    Description=Librarian Library Metadata Organizer Service
     After=network.target
 
     [Service]
     Type=simple
     User=root
-    WorkingDirectory=/var/lib/grimmory-web
+    WorkingDirectory=/var/lib/librarian-web
     ExecStart=/usr/bin/bb babashka/container.clj run
     Environment=GEMINI_API_KEY=your-api-key-here
     Restart=on-failure
     RestartSec=30s
     ```
 
-3. Configure the periodic timer module in `/etc/systemd/system/grimmory-librarian.timer`:
+3. Configure the periodic timer module in `/etc/systemd/system/librarian.timer`:
     ```ini
     [Unit]
-    Description=Run Grimmory Library Scan Periodically
+    Description=Run Librarian Library Scan Periodically
 
     [Timer]
     OnCalendar=*-*-* *:00:00
@@ -254,13 +250,13 @@ To deploy the daemon as an automated systemd timer:
 4. Enable and boot the timer:
     ```bash
     sudo systemctl daemon-reload
-    sudo systemctl enable --now grimmory-librarian.timer
+    sudo systemctl enable --now librarian.timer
     ```
 
 5. Monitor runtime progress:
     ```bash
     # View system logs
-    journalctl -u grimmory-librarian.service -f
+    journalctl -u librarian.service -f
     ```
 
 ---

@@ -23,7 +23,7 @@ function addServerLog(msg: string) {
   const timestamp = new Date().toLocaleTimeString();
   const entry = `[${timestamp}] ${msg}`;
   logs.push(entry);
-  console.log(`[Grimmory Logger] ${msg}`);
+  console.log(`[Librarian Logger] ${msg}`);
   if (logs.length > 200) {
     logs.shift();
   }
@@ -75,7 +75,7 @@ function initFilesystem() {
   }
 
   const defaultConfig = {
-    serviceName: "grimmory-librarian",
+    serviceName: "librarian",
     userName: "root",
     workingDir: process.cwd(),
     scriptPath: path.join(process.cwd(), "dist/server.cjs"),
@@ -125,7 +125,7 @@ function initFilesystem() {
   }
 
   if (logs.length === 0) {
-    addServerLog("Grimmory Database & Full-Stack Daemon active. File system monitoring initialized.");
+    addServerLog("Librarian Database & Full-Stack Daemon active. File system monitoring initialized.");
   }
 
   // Ensure active paths
@@ -147,7 +147,7 @@ function queryGoogleBooksByIsbn(isbn: string): Promise<any> {
     const cleanIsbn = isbn.replace(/\D/g, "");
     const url = `https://www.googleapis.com/books/v1/volumes?q=isbn:${cleanIsbn}`;
     
-    const req = https.get(url, { headers: { "User-Agent": "Grimmory-Web/1.0" } }, (res) => {
+    const req = https.get(url, { headers: { "User-Agent": "Librarian-Web/1.0" } }, (res) => {
       let data = "";
       res.on("data", (chunk) => { data += chunk; });
       res.on("end", () => {
@@ -222,7 +222,7 @@ async function extractMetadataViaGemini(ocrText: string, modelName: string): Pro
     return cleaned.substring(0, 4000);
   };
 
-  const systemInstruction = `Act as the Grimmory Library Metadata Agent. Your task is to extract book metadata from OCR-text of the first pages.
+  const systemInstruction = `Act as the Librarian Library Metadata Agent. Your task is to extract book metadata from OCR-text of the first pages.
 RULES:
 1. CLEAN: Fix OCR errors in Author/Title based on context.
 2. EXTRACT: Find [author, title, year, genre, isbn].
@@ -665,7 +665,7 @@ async function startServer() {
   app.use(express.json());
 
   // Google Gemini Extract API Proxy endpoint
-  app.post("/api/grimmory/extract", async (req, res) => {
+  app.post(["/api/grimmory/extract", "/api/librarian/extract"], async (req, res) => {
     try {
       const { ocrText, modelName } = req.body;
       if (!ocrText) {
@@ -679,7 +679,7 @@ async function startServer() {
         contextLengthUsed: ocrText.length
       });
     } catch (err: any) {
-      console.error("[Grimmory API Error]:", err);
+      console.error("[Librarian API Error]:", err);
       return res.status(500).json({ error: err?.message || "Internal server error occurred during extraction." });
     }
   });
@@ -926,7 +926,7 @@ async function startServer() {
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[Grimmory Full-Stack Server] Active on port ${PORT}`);
+    console.log(`[Librarian Full-Stack Server] Active on port ${PORT}`);
   });
 }
 

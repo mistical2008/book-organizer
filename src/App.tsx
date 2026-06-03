@@ -14,13 +14,13 @@ export default function App() {
       <nav className="flex flex-col md:flex-row items-center justify-between px-6 md:px-8 py-4 md:h-20 border-b border-white/5 bg-[#0F0F0D] shrink-0 gap-4" id="main-header">
         <div className="flex items-center gap-4">
           <div className="w-10 h-10 bg-[#C4A47C] rounded flex items-center justify-center shadow-lg shrink-0">
-            <span className="text-[#0D0D0B] font-bold text-xl font-serif">G</span>
+            <span className="text-[#0D0D0B] font-bold text-xl font-serif">L</span>
           </div>
           <div className="text-left">
             <h1 className="text-lg md:text-xl font-medium tracking-wide font-serif text-[#E4E4E0] flex items-center gap-2">
-              Grimmory
+              Librarian
               <span className="text-[#C4A47C]/70 italic font-normal text-xs font-serif">v2.5.0</span>
-              <span className="text-[9px] uppercase tracking-wider font-mono bg-white/5 border border-white/10 text-[#C4A47C] px-1.5 py-0.5 rounded leading-none">оап</span>
+              <span className="text-[9px] uppercase tracking-wider font-mono bg-white/5 border border-white/10 text-[#C4A47C] px-1.5 py-0.5 rounded leading-none">LBR</span>
             </h1>
             <p className="text-[10px] uppercase tracking-[0.2em] text-white/40 font-mono">Library Metadata Agent & Optimizer</p>
           </div>
@@ -97,10 +97,10 @@ export default function App() {
           {activeTab === "methodology" && (
             <div className="bg-[#121210] text-[#E4E4E0] p-6 md:p-8 rounded-xl border border-white/5 flex flex-col gap-6 text-left max-w-4xl mx-auto" id="docs-panel">
               <div className="flex flex-col gap-1 border-b border-white/5 pb-4">
-                <span className="text-[10px] font-mono text-[#C4A47C] font-bold uppercase tracking-widest">Architectural Manual (Технічний Маніфест)</span>
-                <h2 className="text-2xl font-serif text-white tracking-wide">Grimmory sorting methodology & Optimizations</h2>
+                <span className="text-[10px] font-mono text-[#C4A47C] font-bold uppercase tracking-widest">Architectural Manual</span>
+                <h2 className="text-2xl font-serif text-white tracking-wide">Librarian sorting methodology & Optimizations</h2>
                 <p className="text-xs text-white/50 mt-1">
-                  How the Grimmory protocol coordinates scan pipelines, database status caching, and confidence-gated Gemini executions inside server-bound environments.
+                  How the Librarian protocol coordinates scan pipelines, database status caching, and confidence-gated Gemini executions inside server-bound environments.
                 </p>
               </div>
 
@@ -148,7 +148,7 @@ export default function App() {
               <div className="bg-[#C4A47C]/5 border border-[#C4A47C]/20 p-4 rounded-lg flex flex-col gap-2 text-xs text-[#C4A47C]" id="docs-self-destruct-banner">
                 <div className="flex items-center gap-1.5 font-bold font-mono text-[10px] text-[#C4A47C] uppercase tracking-wider">
                   <ShieldAlert className="w-4 h-4 text-[#C4A47C]" />
-                  Self-deactivating systemd daemon logic (Автовидалення демона)
+                  Self-deactivating systemd daemon logic
                 </div>
                 <p className="leading-relaxed text-white/70">
                   To assure reliable background processing that survives blackouts or local reboots, the code registers a systemd background service and timer daemon. Once the scanner finishes traversing all folders and is certain no pending books remain, it triggers an autonomous self-cleanup script that stops, disables, and deletes its own service files, ensuring no dead CPU cycles are wasted on an empty directory state.
@@ -158,7 +158,7 @@ export default function App() {
               <div className="bg-[#121210] border border-white/5 p-5 rounded-lg flex flex-col gap-3 text-xs" id="docs-nixos-section">
                 <div className="flex items-center gap-1.5 font-bold font-mono text-[10px] text-[#C4A47C] uppercase tracking-widest border-b border-white/5 pb-2">
                   <Settings className="w-4 h-4 text-[#C4A47C]" />
-                  NixOS Declarative Deployment (Ніксос Конфігурація)
+                  NixOS Declarative Deployment (NixOS Configuration)
                 </div>
                 <p className="leading-relaxed text-white/70">
                   NixOS manages its operating system state declaratively. Manual file placement is an anti-pattern. You can now consume this workspace as a native **Nix Flake Module**!

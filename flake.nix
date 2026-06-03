@@ -1,5 +1,5 @@
 {
-  description = "Grimmory Library Organizer - Packaged with native Node portal and automated Python metadata daemon on NixOS";
+  description = "Librarian Library Organizer - Packaged with native Node portal and automated Python metadata daemon on NixOS";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
@@ -12,7 +12,7 @@
         pkgs = import nixpkgs { inherit system; };
 
         # 1. Package the Python Librarian Daemon
-        grimmory-daemon = pkgs.writers.writePython3Bin "grimmory-daemon" {
+        librarian-daemon = pkgs.writers.writePython3Bin "librarian-daemon" {
           libraries = with pkgs.python3Packages; [
             pillow
             pytesseract
@@ -23,8 +23,8 @@
         } (builtins.readFile ./src/components/CodeGenerator.tsx); # Note to users to download their custom config or use default
 
         # 2. Package the full React + Express web server
-        grimmory-web = pkgs.buildNpmPackage {
-          pname = "grimmory-web";
+        librarian-web = pkgs.buildNpmPackage {
+          pname = "librarian-web";
           version = "2.5.0";
 
           src = ./.;
@@ -39,21 +39,21 @@
           '';
 
           installPhase = ''
-            mkdir -p $out/lib/node_modules/grimmory
-            cp -r * $out/lib/node_modules/grimmory/
+            mkdir -p $out/lib/node_modules/librarian
+            cp -r * $out/lib/node_modules/librarian/
             mkdir -p $out/bin
-            ln -s $out/lib/node_modules/grimmory/dist/server.cjs $out/bin/grimmory-web
+            ln -s $out/lib/node_modules/librarian/dist/server.cjs $out/bin/librarian-web
           '';
         };
 
       in {
         packages = {
-          default = grimmory-daemon;
-          inherit grimmory-daemon grimmory-web;
+          default = librarian-daemon;
+          inherit librarian-daemon librarian-web;
         };
 
         devShells.default = pkgs.mkShell {
-          name = "grimmory-development-shell";
+          name = "librarian-development-shell";
 
           buildInputs = [
             pkgs.nodejs_20
@@ -80,11 +80,11 @@
             ln -sf ${pkgs.tesseract-ocr-ukr}/share/tessdata/ukr.traineddata .tessdata/
 
             echo "========================================================="
-            echo "  📜 GRIMMORY DEVELOPMENT FLAKE SHELL ACTIVE"
-            echo "  System: ${system}"
+            echo "  📜 LIBRARIAN DEVELOPMENT FLAKE SHELL ACTIVE"
+            echo "  System: \${system}"
             echo "========================================================="
             echo " Available engines: Node \${pkgs.nodejs_20.version}, Python 3 \${pkgs.python3.version}"
-            echo " Integrated dictionaries: English (eng), Ukrainian (ukr)"
+            echo " Integrated dictionaries: English (eng), Ukrainian (ukr), etc."
             echo " Run 'npm run dev' to boot the sandboxed portal locally!"
             echo "========================================================="
           '';
@@ -93,10 +93,10 @@
         # 3. Declarative NixOS System Modules for Nix Flakes
         nixosModules.default = { config, lib, pkgs, ... }:
           let
-            cfg = config.services.grimmory;
+            cfg = config.services.librarian;
           in {
-            options.services.grimmory = {
-              enable = lib.mkEnableOption "Grimmory Library Metadata Organizer Portal & integrated Daemon";
+            options.services.librarian = {
+              enable = lib.mkEnableOption "Librarian Library Metadata Organizer Portal & integrated Daemon";
               
               port = lib.mkOption {
                 type = lib.types.port;
@@ -112,14 +112,14 @@
 
               stateDir = lib.mkOption {
                 type = lib.types.str;
-                default = "/var/lib/grimmory-web";
+                default = "/var/lib/librarian-web";
                 description = "State directory where the database, config, sorted, and uploaded books are located.";
               };
             };
 
             config = lib.mkIf cfg.enable {
-              systemd.services.grimmory = {
-                description = "Grimmory Interactive Portal & Integrated Background Sync Daemon";
+              systemd.services.librarian = {
+                description = "Librarian Interactive Portal & Integrated Background Sync Daemon";
                 after = [ "network.target" ];
                 wantedBy = [ "multi-user.target" ];
 
@@ -127,7 +127,7 @@
                   Type = "simple";
                   User = "root"; # Needed to read and write any scanning source folders configured in web app
                   WorkingDirectory = cfg.stateDir;
-                  ExecStart = "${pkgs.nodejs_20}/bin/node ${cfg.stateDir}/dist/server.cjs";
+                  ExecStart = "${pkgs.nodejs_20}/bin/node \${cfg.stateDir}/dist/server.cjs";
                   Restart = "on-failure";
                   EnvironmentFiles = lib.optional (cfg.apiKeyFile != null) cfg.apiKeyFile;
                 };

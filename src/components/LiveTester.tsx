@@ -54,7 +54,7 @@ ISBN 978-966-03-8120-9 (Помилка друку: 1SВN 978-966-О3-8120-9)
     setResult(null);
 
     try {
-      const response = await fetch("/api/grimmory/extract", {
+      const response = await fetch("/api/librarian/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -86,7 +86,7 @@ ISBN 978-966-03-8120-9 (Помилка друку: 1SВN 978-966-О3-8120-9)
           Live Gemini Extraction Tester
         </h2>
         <p className="text-xs text-white/50">
-          Paste Ukrainian or multi-lingual raw book scans. Select a Gemini model to test gated thinning and confidence routing in real-time.
+          Paste raw library scans or multi-lingual book texts. Select a Gemini model to test gated thinning and confidence routing in real-time.
         </p>
       </div>
 
@@ -184,7 +184,7 @@ ISBN 978-966-03-8120-9 (Помилка друку: 1SВN 978-966-О3-8120-9)
               <div className="absolute inset-0 bg-[#0D0D0B]/90 flex flex-col items-center justify-center gap-2" id="tester-loader-overlay">
                 <RefreshCw className="w-8 h-8 text-[#C4A47C] animate-spin" />
                 <span className="text-xs text-[#C4A47C] font-mono uppercase tracking-widest font-semibold">Inquiring LLM Agent...</span>
-                <span className="text-[10px] text-white/40 font-mono text-center px-4 leading-normal max-w-xs">Activating Dual-Lang prompt schemas. Calculating output scores.</span>
+                <span className="text-[10px] text-white/40 font-mono text-center px-4 leading-normal max-w-xs">Preparing prompt schemas. Calculating output scores.</span>
               </div>
             )}
 

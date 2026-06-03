@@ -1,10 +1,10 @@
 #!/usr/bin/env bb
 ;; =============================================================================
-;; Grimmory Container Orchestrator (Clojure Babashka)
+;; Librarian Container Orchestrator (Clojure Babashka)
 ;; Coordinates library folder sync cycles, cleans temp files, and manages process hooks.
 ;; =============================================================================
 
-(ns grimmory.container
+(ns librarian.container
   (:require [clojure.java.io :as io]
             [clojure.java.shell :refer [sh]]
             [clojure.string :as str]
@@ -18,7 +18,7 @@
 
 (defn run-checks []
   (println "=========================================================")
-  (println "  🦉 GRIMMORY DEPLOYMENT SYSTEM STATUS & NATIVE CHECKS    ")
+  (println "  🦉 LIBRARIAN DEPLOYMENT SYSTEM STATUS & NATIVE CHECKS    ")
   (println "=========================================================")
   (check-native-dependency "tesseract" "Please install tesseract-ocr (with ukr and eng engine packages).")
   (check-native-dependency "pdftotext" "Please install poppler-utils (retains PDF layout scanners).")
@@ -47,7 +47,7 @@
     (println (str "✨ Temporary folder cleanup completed. Erased count: " @deleted-count))))
 
 (defn run-service-loop []
-  (println "🔄 Grimmory Babashka daemon loop active. Pulling automated schedulers dynamically from data/config.json.")
+  (println "🔄 Librarian Babashka daemon loop active. Pulling automated schedulers dynamically from data/config.json.")
   (try
     (while true
       (let [conf (read-config)

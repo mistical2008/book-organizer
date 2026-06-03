@@ -44,8 +44,8 @@ interface FileOrganizationRecord {
 export default function PipelineSandbox() {
   // Config state
   const [config, setConfig] = useState<any>({
-    inputDirs: ["/var/lib/grimmory/input"],
-    outputDir: "/var/lib/grimmory/sorted",
+    inputDirs: ["/var/lib/librarian/input"],
+    outputDir: "/var/lib/librarian/sorted",
     destinationTemplate: "{Author} - {Title} ({Year})"
   });
 
@@ -374,7 +374,7 @@ export default function PipelineSandbox() {
             <div className="flex flex-col gap-0.5">
               <h3 className="text-xs uppercase tracking-widest text-[#C4A47C] flex items-center gap-2 font-mono font-bold">
                 <Database className="w-3.5 h-3.5" />
-                Grimmory State Database (Транзакційні Таблиці)
+                Librarian State Database
               </h3>
               <p className="text-[10px] text-white/40">Real-time state records persisted in metadata cache.</p>
             </div>
