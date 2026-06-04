@@ -140,10 +140,16 @@
                 after = [ "network.target" ];
                 wantedBy = [ "multi-user.target" ];
 
+                preStart = ''
+                  mkdir -p ${cfg.stateDir}
+                  ln -sfn ${self.packages.${pkgs.system}.librarian-web}/lib/node_modules/librarian/dist ${cfg.stateDir}/dist
+                '';
+
                 serviceConfig = {
                   Type = "simple";
                   User = "root"; # Needed to read and write any scanning source folders configured in web app
                   WorkingDirectory = cfg.stateDir;
+                  StateDirectory = "librarian-web";
                   ExecStart = "${pkgs.nodejs}/bin/node ${cfg.stateDir}/dist/server.cjs";
                   Restart = "on-failure";
                   EnvironmentFiles = lib.optional (cfg.apiKeyFile != null) cfg.apiKeyFile;
