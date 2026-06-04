@@ -56,7 +56,7 @@
           name = "librarian-development-shell";
 
           buildInputs = [
-            pkgs.nodejs_20
+            pkgs.nodejs
             pkgs.nodePackages.npm
             pkgs.tesseract
             pkgs.tesseract-ocr-eng
@@ -83,7 +83,7 @@
             echo "  📜 LIBRARIAN DEVELOPMENT FLAKE SHELL ACTIVE"
             echo "  System: \${system}"
             echo "========================================================="
-            echo " Available engines: Node \${pkgs.nodejs_20.version}, Python 3 \${pkgs.python3.version}"
+            echo " Available engines: Node \${pkgs.nodejs.version}, Python 3 \${pkgs.python3.version}"
             echo " Integrated dictionaries: English (eng), Ukrainian (ukr), etc."
             echo " Run 'npm run dev' to boot the sandboxed portal locally!"
             echo "========================================================="
@@ -127,7 +127,7 @@
                   Type = "simple";
                   User = "root"; # Needed to read and write any scanning source folders configured in web app
                   WorkingDirectory = cfg.stateDir;
-                  ExecStart = "${pkgs.nodejs_20}/bin/node ${cfg.stateDir}/dist/server.cjs";
+                  ExecStart = "${pkgs.nodejs}/bin/node ${cfg.stateDir}/dist/server.cjs";
                   Restart = "on-failure";
                   EnvironmentFiles = lib.optional (cfg.apiKeyFile != null) cfg.apiKeyFile;
                 };
