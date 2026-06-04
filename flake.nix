@@ -126,6 +126,12 @@
                 default = "/var/lib/librarian-web";
                 description = "State directory where the database, config, sorted, and uploaded books are located.";
               };
+
+              openFirewall = lib.mkOption {
+                type = lib.types.bool;
+                default = false;
+                description = "Open ports in the firewall for the Librarian Web Portal.";
+              };
             };
 
             config = lib.mkIf cfg.enable {
@@ -149,6 +155,8 @@
                   TESSDATA_PREFIX = "${tessdata-fast}/share/tessdata";
                 };
               };
+
+              networking.firewall.allowedTCPPorts = lib.optional cfg.openFirewall cfg.port;
             };
           };
       };
