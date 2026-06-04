@@ -13,12 +13,8 @@
           inherit system;
           overlays = [
             (final: prev: {
-              tessdata-fast = prev.symlinkJoin {
-                name = "tessdata-fast";
-                paths = [
-                  prev.tesseract-ocr-eng
-                  prev.tesseract-ocr-ukr
-                ];
+              tessdata-fast = prev.tesseract.override {
+                enableLanguages = [ "eng" "ukr" ];
               };
             })
           ];
@@ -106,12 +102,8 @@
         nixosModules.default = { config, lib, pkgs, ... }:
           let
             cfg = config.services.librarian;
-            tessdata-fast = pkgs.symlinkJoin {
-              name = "tessdata-fast";
-              paths = [
-                pkgs.tesseract-ocr-eng
-                pkgs.tesseract-ocr-ukr
-              ];
+            tessdata-fast = pkgs.tesseract.override {
+              enableLanguages = [ "eng" "ukr" ];
             };
           in {
             options.services.librarian = {

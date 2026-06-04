@@ -1,12 +1,12 @@
 {
   "serviceName": "librarian",
   "userName": "root",
-  "workingDir": "/app/applet",
-  "scriptPath": "/app/applet/dist/server.cjs",
+  "workingDir": "/",
+  "scriptPath": "/dist/server.cjs",
   "inputDirs": [
-    "/app/applet/data/books_to_sort"
+    "/data/books_to_sort"
   ],
-  "outputDir": "/app/applet/data/sorted_library",
+  "outputDir": "/data/sorted_library",
   "destinationTemplate": "{Author} - {Title} ({Year})",
   "geminiModel": "gemini-3.5-flash",
   "confidenceThreshold": 70,

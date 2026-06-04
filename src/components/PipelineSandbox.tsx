@@ -88,43 +88,63 @@ export default function PipelineSandbox() {
       // 1. Fetch status
       const resStatus = await fetch("/api/status");
       if (resStatus.ok) {
-        const payload = await resStatus.json();
-        setIsProcessing(payload.isProcessing);
-        setStats(payload.stats);
-        setLastRunTime(payload.lastRunTime);
+        try {
+          const payload = await resStatus.json();
+          setIsProcessing(payload.isProcessing);
+          setStats(payload.stats);
+          setLastRunTime(payload.lastRunTime);
+        } catch (err: any) {
+          console.warn("Could not parse status response as JSON:", err.message);
+        }
       }
 
       // 2. Fetch config
       const resConfig = await fetch("/api/config");
       if (resConfig.ok) {
-        const payload = await resConfig.json();
-        setConfig(payload);
+        try {
+          const payload = await resConfig.json();
+          setConfig(payload);
+        } catch (err: any) {
+          console.warn("Could not parse config response as JSON:", err.message);
+        }
       }
 
       // 3. Fetch database tables
       const resDb = await fetch("/api/database");
       if (resDb.ok) {
-        const payload = await resDb.json();
-        setDbState({
-          scanned_books: payload.scanned_books || [],
-          isbn_requests: payload.isbn_requests || [],
-          ai_categorization: payload.ai_categorization || [],
-          file_organization: payload.file_organization || []
-        });
+        try {
+          const payload = await resDb.json();
+          setDbState({
+            scanned_books: payload.scanned_books || [],
+            isbn_requests: payload.isbn_requests || [],
+            ai_categorization: payload.ai_categorization || [],
+            file_organization: payload.file_organization || []
+          });
+        } catch (err: any) {
+          console.warn("Could not parse database response as JSON:", err.message);
+        }
       }
 
       // 4. Fetch logs
       const resLogs = await fetch("/api/logs");
       if (resLogs.ok) {
-        const payload = await resLogs.json();
-        setPipelineLogs(payload.logs || []);
+        try {
+          const payload = await resLogs.json();
+          setPipelineLogs(payload.logs || []);
+        } catch (err: any) {
+          console.warn("Could not parse logs response as JSON:", err.message);
+        }
       }
 
       // 5. Fetch files
       const resFiles = await fetch("/api/system/files");
       if (resFiles.ok) {
-        const payload = await resFiles.json();
-        setInputFiles(payload.files || []);
+        try {
+          const payload = await resFiles.json();
+          setInputFiles(payload.files || []);
+        } catch (err: any) {
+          console.warn("Could not parse system files response as JSON:", err.message);
+        }
       }
     } catch (e) {
       console.error("Error polling server:", e);

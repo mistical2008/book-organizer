@@ -1,0 +1,113 @@
+{
+  "scanned_books": [
+    {
+      "filepath": "/data/books_to_sort/kaydasheva_simya_rotated.djvu",
+      "filename": "kaydasheva_simya_rotated.djvu",
+      "isbn_detected": null,
+      "status": "completed",
+      "timestamp": "2026-06-04T09:46:12.863Z"
+    },
+    {
+      "filepath": "/data/books_to_sort/kobzar_shevchenko_2012_edition.pdf",
+      "filename": "kobzar_shevchenko_2012_edition.pdf",
+      "isbn_detected": null,
+      "status": "completed",
+      "timestamp": "2026-06-04T09:46:17.873Z"
+    },
+    {
+      "filepath": "/data/books_to_sort/kotlyarevsky_eneida_scanned_v3.pdf",
+      "filename": "kotlyarevsky_eneida_scanned_v3.pdf",
+      "isbn_detected": null,
+      "status": "completed",
+      "timestamp": "2026-06-04T09:46:22.403Z"
+    },
+    {
+      "filepath": "/data/books_to_sort/sicp_mit_press.epub",
+      "filename": "sicp_mit_press.epub",
+      "isbn_detected": null,
+      "status": "completed",
+      "timestamp": "2026-06-04T09:46:27.911Z"
+    }
+  ],
+  "isbn_requests": [],
+  "ai_categorization": [
+    {
+      "filepath": "/data/books_to_sort/kaydasheva_simya_rotated.djvu",
+      "text_preview": "КИЇB - ДЕPЖABA BИД-BO «ДHІПPO» - 1983\nІВАН НЕЧУЙ-ЛЕВИЦЬКИЙ\nКАЙДAШEBA СІМ'Я\nПовiсть на дві часті.\nМал. О. Данченка.\n[ OCR ERROR: Heчуй-Jeвицbкuй: Kaйдашеbа сiм'я. Повістb, напuсана у 1878-1879 роках. ]\nКарпо i Лаврін стояли під повіткою і стругали......",
+      "status": "completed",
+      "timestamp": "2026-06-04T09:46:12.864Z"
+    },
+    {
+      "filepath": "/data/books_to_sort/kobzar_shevchenko_2012_edition.pdf",
+      "text_preview": "Тарас ШЕВЧЕНКО\nК О Б З А Р\nПовне видання з ілюстраціями.\nВидавництво Книжковий Клуб, 2012\nОригінальне видання датується 1840 роком у Санкт-Петербурзі.\nІSВN 978 - 966 - 2449 - 01 - 3\n[ OCR Noise: Т. Г. Шeвчeнкo, Ko6зapь. Думи мої, думи мої, лихо мені з вами! ]...",
+      "status": "completed",
+      "timestamp": "2026-06-04T09:46:17.874Z"
+    },
+    {
+      "filepath": "/data/books_to_sort/kotlyarevsky_eneida_scanned_v3.pdf",
+      "text_preview": "IВАН КOTЛЯPEBCЬКИЙ\nЕНЕЇДА\nПоема в шести частинах\nХарків\nМiнiстерство освіти України, 1993 р.\nБiблiотека укр. клясики.\nУДК 821.161.2\nББК 84(4УКР)\nISBN 978-966-03-8120-9 (Помилка друку: 1SВN 978-966-О3-8120-9)\nЕней був парубок моторний i хлопець хоть куди козак...\nЗшито у друкарні Г. П. Квітки, 1798 р...",
+      "status": "completed",
+      "timestamp": "2026-06-04T09:46:22.403Z"
+    },
+    {
+      "filepath": "/data/books_to_sort/sicp_mit_press.epub",
+      "text_preview": "Structure and Interpretation of Computer Programs\nSecond Edition\nHarold Abelson and Gerald Jay Sussman\nwith Julie Sussman\nThe MIT Press, Cambridge, Massachusetts\nISBN 0-262-51087-1 (paperback), 0-262-01153-0 (hardcover)\nCopyright 1996 by The Massachusetts Institute of Technology....",
+      "status": "completed",
+      "timestamp": "2026-06-04T09:46:27.912Z"
+    }
+  ],
+  "file_organization": [
+    {
+      "filepath": "/data/books_to_sort/kaydasheva_simya_rotated.djvu",
+      "dest_path": "/data/sorted_library/Fiction/Іван Нечуй-Левицький - Кайдашева сім'я (1983).djvu",
+      "author": "Іван Нечуй-Левицький",
+      "title": "Кайдашева сім'я",
+      "year": 1983,
+      "genre": "Fiction",
+      "isbn": "null",
+      "confidence": 95,
+      "status": "completed",
+      "notes": "Organized into catalog. Sourced from: Gemini AI Model [gemini-3.5-flash]. Comments: The publication year is 1983. The novel was originally written in 1878-1879. No ISBN is present in the text.",
+      "timestamp": "2026-06-04T09:46:17.873Z"
+    },
+    {
+      "filepath": "/data/books_to_sort/kobzar_shevchenko_2012_edition.pdf",
+      "dest_path": "/data/sorted_library/Poetry/Taras Shevchenko - Kobzar (2012).pdf",
+      "author": "Taras Shevchenko",
+      "title": "Kobzar",
+      "year": 2012,
+      "genre": "Poetry",
+      "isbn": "9789662449013",
+      "confidence": 100,
+      "status": "completed",
+      "notes": "Organized into catalog. Sourced from: Gemini AI Model [gemini-3.5-flash]. Comments: Successfully extracted metadata for the 2012 edition of Taras Shevchenko's 'Kobzar', originally published in 1840.",
+      "timestamp": "2026-06-04T09:46:22.403Z"
+    },
+    {
+      "filepath": "/data/books_to_sort/kotlyarevsky_eneida_scanned_v3.pdf",
+      "dest_path": "/data/sorted_library/Poetry/Ivan Kotliarevsky - Eneida (1993).pdf",
+      "author": "Ivan Kotliarevsky",
+      "title": "Eneida",
+      "year": 1993,
+      "genre": "Poetry",
+      "isbn": "9789660381209",
+      "confidence": 95,
+      "status": "completed",
+      "notes": "Organized into catalog. Sourced from: Gemini AI Model [gemini-3.5-flash]. Comments: The text refers to a 1993 edition of the classic Ukrainian poem 'Eneida', originally published in 1798.",
+      "timestamp": "2026-06-04T09:46:27.911Z"
+    },
+    {
+      "filepath": "/data/books_to_sort/sicp_mit_press.epub",
+      "dest_path": "/data/sorted_library/Computer_Science/Harold Abelson, Gerald Jay Sussman, Julie Sussman - Structure and Interpretation of Computer Programs (1996).epub",
+      "author": "Harold Abelson, Gerald Jay Sussman, Julie Sussman",
+      "title": "Structure and Interpretation of Computer Programs",
+      "year": 1996,
+      "genre": "Computer Science",
+      "isbn": "0262510871",
+      "confidence": 100,
+      "status": "completed",
+      "notes": "Organized into catalog. Sourced from: Gemini AI Model [gemini-3.5-flash]. Comments: Extracted from clear title page text. Selected the paperback ISBN (0262510871) over the hardcover ISBN (0262011530).",
+      "timestamp": "2026-06-04T09:46:31.799Z"
+    }
+  ]
+}
