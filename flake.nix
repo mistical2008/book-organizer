@@ -59,8 +59,7 @@
             pkgs.nodejs
             pkgs.nodePackages.npm
             pkgs.tesseract
-            pkgs.tesseract-ocr-eng
-            pkgs.tesseract-ocr-ukr
+            pkgs.tessdata-fast
 
             (pkgs.python3.withPackages (ps: with ps; [
               pillow
@@ -76,8 +75,8 @@
           shellHook = ''
             export TESSDATA_PREFIX="$(pwd)/.tessdata"
             mkdir -p .tessdata
-            ln -sf ${pkgs.tesseract-ocr-eng}/share/tessdata/eng.traineddata .tessdata/
-            ln -sf ${pkgs.tesseract-ocr-ukr}/share/tessdata/ukr.traineddata .tessdata/
+            ln -sf ${pkgs.tessdata-fast}/share/tessdata/eng.traineddata .tessdata/
+            ln -sf ${pkgs.tessdata-fast}/share/tessdata/ukr.traineddata .tessdata/
 
             echo "========================================================="
             echo "  📜 LIBRARIAN DEVELOPMENT FLAKE SHELL ACTIVE"
@@ -135,7 +134,7 @@
                 environment = {
                   PORT = toString cfg.port;
                   NODE_ENV = "production";
-                  TESSDATA_PREFIX = "${pkgs.tesseract-ocr-eng}/share/tessdata:${pkgs.tesseract-ocr-ukr}/share/tessdata";
+                  TESSDATA_PREFIX = "${pkgs.tessdata-fast}/share/tessdata";
                 };
               };
             };
