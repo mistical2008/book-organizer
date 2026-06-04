@@ -9,7 +9,20 @@
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        pkgs = import nixpkgs { inherit system; };
+        pkgs = import nixpkgs {
+          inherit system;
+          overlays = [
+            (final: prev: {
+              tessdata-fast = prev.symlinkJoin {
+                name = "tessdata-fast";
+                paths = [
+                  prev.tesseract-ocr-eng
+                  prev.tesseract-ocr-ukr
+                ];
+              };
+            })
+          ];
+        };
 
         # 1. Package the Python Librarian Daemon
         librarian-daemon = pkgs.writers.writePython3Bin "librarian-daemon" {
@@ -93,6 +106,13 @@
         nixosModules.default = { config, lib, pkgs, ... }:
           let
             cfg = config.services.librarian;
+            tessdata-fast = pkgs.symlinkJoin {
+              name = "tessdata-fast";
+              paths = [
+                pkgs.tesseract-ocr-eng
+                pkgs.tesseract-ocr-ukr
+              ];
+            };
           in {
             options.services.librarian = {
               enable = lib.mkEnableOption "Librarian Library Metadata Organizer Portal & integrated Daemon";
@@ -134,7 +154,7 @@
                 environment = {
                   PORT = toString cfg.port;
                   NODE_ENV = "production";
-                  TESSDATA_PREFIX = "${pkgs.tessdata-fast}/share/tessdata";
+                  TESSDATA_PREFIX = "${tessdata-fast}/share/tessdata";
                 };
               };
             };

@@ -451,7 +451,7 @@ async function runLibrarianSync() {
       }
 
       // Check ISBN inside text
-      const isbnRegex = /(?:ISBN(?:[- ]*1[03])?:?\\s*)?((?:97[89][- ]?)?(?:\\d[- ]?){9}[\\dXx])/i;
+      const isbnRegex = /(?:ISBN(?:[- ]*1[03])?:?\s*)?((?:97[89][- ]?)?(?:\d[- ]?){9}[\dXx])/i;
       const match = textContent.match(isbnRegex);
       const isbnResolved = match ? match[1].replace(/[- ]/g, "") : null;
 
