@@ -36,7 +36,13 @@
           pname = "librarian-web";
           version = "2.5.0";
 
-          src = ./.;
+          src = builtins.path {
+            path = ./.;
+            name = "librarian-web";
+            filter = path: type:
+              let base = baseNameOf path; in
+              base != "node_modules" && base != "dist" && base != ".git" && base != ".tessdata";
+          };
 
           npmDepsHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; # Placeholder, can be overridden with a fixed derivation or used locally
 
