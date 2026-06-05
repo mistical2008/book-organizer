@@ -7,6 +7,10 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 
+import { extractValidIsbn } from "./src/lib/core";
+import { simulateFileRun } from "./src/lib/sandbox";
+import { organizeFilePersistent } from "./src/lib/organizer";
+
 dotenv.config();
 
 // Helper to resolve paths containing "~" (home folder) and relative segments
@@ -173,66 +177,6 @@ function initFilesystem() {
     }
     seedDemoFiles(mainInput);
   } catch (e) {}
-}
-
-function isValidIsbn10(isbn: string): boolean {
-  const clean = isbn.replace(/[^0-9X]/gi, "").toUpperCase();
-  if (clean.length !== 10) return false;
-  let sum = 0;
-  for (let i = 0; i < 9; i++) {
-    const digit = parseInt(clean[i], 10);
-    if (isNaN(digit)) return false;
-    sum += (10 - i) * digit;
-  }
-  const lastChar = clean[9];
-  let lastVal = 0;
-  if (lastChar === "X") {
-    lastVal = 10;
-  } else {
-    lastVal = parseInt(lastChar, 10);
-    if (isNaN(lastVal)) return false;
-  }
-  sum += lastVal;
-  return sum % 11 === 0;
-}
-
-function isValidIsbn13(isbn: string): boolean {
-  const clean = isbn.replace(/[^0-9]/g, "");
-  if (clean.length !== 13) return false;
-  let sum = 0;
-  for (let i = 0; i < 13; i++) {
-    const digit = parseInt(clean[i], 10);
-    if (isNaN(digit)) return false;
-    sum += (i % 2 === 0 ? 1 : 3) * digit;
-  }
-  return sum % 10 === 0;
-}
-
-function isValidIsbn(isbn: string): boolean {
-  const clean = isbn.replace(/[^0-9X]/gi, "").toUpperCase();
-  if (clean.length === 10) {
-    return isValidIsbn10(clean);
-  } else if (clean.length === 13) {
-    return isValidIsbn13(clean);
-  }
-  return false;
-}
-
-function extractValidIsbn(text: string): string | null {
-  if (!text) return null;
-  // Match any sequence of 10 or 13 characters that look like book identifiers
-  const isbnRegex = /(?:ISBN(?:[- ]*1[03])?:?\s*)?((?:97[89][- ]?)?(?:\d[- ]?){9}[\dXx])/gi;
-  let match;
-  while ((match = isbnRegex.exec(text)) !== null) {
-    const raw = match[1];
-    if (raw) {
-      const clean = raw.replace(/[- ]/g, "");
-      if (isValidIsbn(clean)) {
-        return clean;
-      }
-    }
-  }
-  return null;
 }
 
 function queryGoogleBooksByIsbn(isbn: string): Promise<any> {
@@ -505,9 +449,26 @@ async function runLibrarianSync() {
     let processedCount = 0;
     for (const file of filesToProcess) {
       if (config.processingMode === "batch" && processedCount >= batchSize) {
-        addServerLog(`Batch size threshold (${batchSize}) reached. Postponing remaining entries for the next synchronized execution.`);
+        addServerLog(`Batch size <${batchSize}> reached. Postponing remaining files for next synchronized execution.`);
         break;
       }
+
+      // Intercept execution and dispatch to the clean Organizer module
+      const success = await organizeFilePersistent(
+        file,
+        config,
+        state,
+        PRESETS,
+        queryGoogleBooksByIsbn,
+        extractMetadataViaGemini,
+        addServerLog,
+        resolvePath
+      );
+
+      if (success) {
+        processedCount++;
+      }
+      continue;
 
       const { filepath, filename } = file;
 
@@ -811,6 +772,61 @@ async function startServer() {
     } catch (err: any) {
       console.error("[Librarian API Error]:", err);
       return res.status(500).json({ error: err?.message || "Internal server error occurred during extraction." });
+    }
+  });
+
+  // REST API: Run zero-side-effect sandbox simulation dry-run (Sandbox domain)
+  app.post("/api/sandbox/run", async (req, res) => {
+    try {
+      const config = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
+      const inputDirs = config.inputDirs || [config.inputDir];
+      const reports: any[] = [];
+      const virtualLogs: string[] = [];
+
+      inputDirs.forEach((dir: string) => {
+        const resolvedDir = resolvePath(dir);
+        if (fs.existsSync(resolvedDir)) {
+          try {
+            const items = fs.readdirSync(resolvedDir);
+            items.forEach(item => {
+              const itemPath = path.join(resolvedDir, item);
+              const isDir = fs.statSync(itemPath).isDirectory();
+              if (!isDir) {
+                const ext = path.extname(item).toLowerCase();
+                if ([".pdf", ".epub", ".djvu", ".txt", ".mobi", ".fb2"].includes(ext)) {
+                  let textContent = "";
+                  try {
+                    textContent = fs.readFileSync(itemPath, "utf-8");
+                  } catch (e) {}
+
+                  // Fallback to presets for rich simulation content
+                  if (!textContent || textContent.length < 50) {
+                    const preset = PRESETS.find(p => item.toLowerCase().includes(p.fileName.split(".")[0]));
+                    textContent = preset ? preset.content : `File: ${item}\nBinary document context.`;
+                  }
+
+                  const rep = simulateFileRun(
+                    itemPath,
+                    item,
+                    textContent,
+                    config,
+                    (msg) => virtualLogs.push(msg)
+                  );
+                  reports.push(rep);
+                }
+              }
+            });
+          } catch (e) {}
+        }
+      });
+
+      res.json({
+        success: true,
+        reports,
+        logs: virtualLogs
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 

@@ -81,6 +81,37 @@ export default function PipelineSandbox() {
   const [activePreset, setActivePreset] = useState<PresetBook>(PRESET_BOOKS[0]);
   const [writingCustom, setWritingCustom] = useState(false);
 
+  // Architecture/Execution Mode Toggles (Dual-Mode Design Specs)
+  const [activeArchitectureTab, setActiveArchitectureTab] = useState<"sandbox" | "organizer">("sandbox");
+  const [sandboxActive, setSandboxActive] = useState(false);
+  const [sandboxReports, setSandboxReports] = useState<any[]>([]);
+  const [sandboxLogs, setSandboxLogs] = useState<string[]>([]);
+
+  const handleTriggerSandbox = async () => {
+    if (sandboxActive) return;
+    setSandboxActive(true);
+    setSandboxLogs([
+      "🧪 [Core Namespace] Preparing string equations and validators...",
+      "🧪 [Sandbox Namespace] Scanning unorganized books catalog virtually with ZERO-side-effects..."
+    ]);
+    try {
+      const res = await fetch("/api/sandbox/run", { method: "POST" });
+      if (res.ok) {
+        const body = await res.json();
+        setSandboxReports(body.reports || []);
+        setSandboxLogs(prev => [
+          ...prev,
+          ...(body.logs || []),
+          "✅ [Core & Sandbox SUCCESS] Virtual catalog simulations completed cleanly."
+        ]);
+        setActiveDbTable("file_organization");
+      }
+    } catch (err: any) {
+      setSandboxLogs(prev => [...prev, `❌ Simulator failed: ${err.message}`]);
+    } finally {
+      setSandboxActive(false);
+    }
+  };
 
   // Polling helper
   const pollServerState = async () => {
@@ -288,29 +319,92 @@ export default function PipelineSandbox() {
           </div>
         </div>
 
-        {/* Active execution controllers */}
-        <div className="flex gap-3 border-t border-white/5 pt-4">
+        {/* Architectural Segregation Tabs */}
+        <div className="flex bg-[#121210] p-1 rounded-lg border border-white/10 font-mono text-[10px] gap-1">
           <button
-            onClick={handleTriggerSync}
-            disabled={isProcessing}
-            className={`flex-1 py-3 px-4 rounded-lg flex items-center justify-center gap-2 font-mono text-xs font-semibold tracking-wider cursor-pointer shadow-lg transition-all ${
-              isProcessing 
-                ? "bg-amber-500/10 border border-amber-500/30 text-amber-500 cursor-wait" 
-                : "bg-[#C4A47C] text-[#0D0D0B] hover:bg-[#D5B58D] hover:scale-[1.01]"
+            onClick={() => setActiveArchitectureTab("sandbox")}
+            className={`flex-1 py-1.5 rounded transition-all font-bold cursor-pointer text-center ${
+              activeArchitectureTab === "sandbox"
+                ? "bg-[#C4A47C] text-[#0D0D0B] shadow"
+                : "text-white/40 hover:text-white"
             }`}
           >
-            {isProcessing ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span>SYNCING FILES...</span>
-              </>
-            ) : (
-              <>
-                <Play className="w-4 h-4" />
-                <span>ORGANIZER RUN NOW</span>
-              </>
-            )}
+            🧪 Sandbox Dry-Run
           </button>
+          <button
+            onClick={() => setActiveArchitectureTab("organizer")}
+            className={`flex-1 py-1.5 rounded transition-all font-bold cursor-pointer text-center ${
+              activeArchitectureTab === "organizer"
+                ? "bg-[#C4A47C] text-[#0D0D0B] shadow"
+                : "text-white/40 hover:text-white"
+            }`}
+          >
+            🚚 File Organizer
+          </button>
+        </div>
+
+        {/* Selected Module Context Summary Description */}
+        <div className="text-[10px] font-mono text-white/50 leading-relaxed bg-[#121210]/30 p-2.5 rounded border border-white/5">
+          {activeArchitectureTab === "sandbox" ? (
+            <p>
+              ⚡ <strong>Virtual Core Sandbox</strong> mode runs string equations on the backend.
+              Guarantees <strong>ZERO-mutations</strong> of files, purely rendering simulated catalogs.
+            </p>
+          ) : (
+            <p>
+              ⚡ <strong>Physical Relocation Module</strong> moves, renames, and auto-purges source books.
+              Saves updated metadata records into SQL database.
+            </p>
+          )}
+        </div>
+
+        {/* Active execution controllers */}
+        <div className="flex gap-3 border-t border-white/5 pt-4">
+          {activeArchitectureTab === "sandbox" ? (
+            <button
+              onClick={handleTriggerSandbox}
+              disabled={sandboxActive}
+              className={`flex-1 py-3 px-4 rounded-lg flex items-center justify-center gap-2 font-mono text-xs font-semibold tracking-wider cursor-pointer shadow-lg transition-all ${
+                sandboxActive
+                  ? "bg-amber-500/10 border border-amber-500/30 text-amber-500 cursor-wait"
+                  : "bg-[#C4A47C] text-[#0D0D0B] hover:bg-[#D5B58D] hover:scale-[1.01]"
+              }`}
+            >
+              {sandboxActive ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>SIMULATING SYSTEM...</span>
+                </>
+              ) : (
+                <>
+                  <Play className="w-4 h-4" />
+                  <span>RUN SANDBOX SIMULATOR</span>
+                </>
+              )}
+            </button>
+          ) : (
+            <button
+              onClick={handleTriggerSync}
+              disabled={isProcessing}
+              className={`flex-1 py-3 px-4 rounded-lg flex items-center justify-center gap-2 font-mono text-xs font-semibold tracking-wider cursor-pointer shadow-lg transition-all ${
+                isProcessing 
+                  ? "bg-amber-500/10 border border-amber-500/30 text-amber-500 cursor-wait" 
+                  : "bg-emerald-600 text-white hover:bg-emerald-500 hover:scale-[1.01]"
+              }`}
+            >
+              {isProcessing ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>REORGANIZING FILES...</span>
+                </>
+              ) : (
+                <>
+                  <Play className="w-4 h-4" />
+                  <span>RUN PERSISTENT ORGANIZER</span>
+                </>
+              )}
+            </button>
+          )}
         </div>
 
         {/* Create custom scan file form */}
@@ -435,27 +529,46 @@ export default function PipelineSandbox() {
                   </tr>
                 </thead>
                 <tbody>
-                  {dbState.scanned_books.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="py-8 text-center text-white/30 italic">scanned_books is empty. Trigger sync to scan the filesystem.</td>
-                    </tr>
-                  ) : (
-                    dbState.scanned_books.map((r, rIdx) => (
-                      <tr key={rIdx} className="border-b border-white/5 hover:bg-white/5 transition-all text-white/80">
-                        <td className="py-2.5 pr-4 pl-2 font-semibold text-[#C4A47C] truncate max-w-xs">{r.filepath}</td>
-                        <td className="py-2.5 pr-4 truncate max-w-xs">{r.filename}</td>
-                        <td className="py-2.5 pr-4 text-center font-bold text-emerald-400">{r.isbn_detected || "NULL"}</td>
-                        <td className="py-2.5 pr-4 text-right">
-                          <span className={`px-1.5 py-0.5 rounded text-[9px] uppercase font-bold ${
-                            r.status === "completed" 
-                              ? "bg-emerald-500/10 text-emerald-400" 
-                              : r.status === "processing" 
-                                ? "bg-amber-500/10 text-amber-500 animate-pulse" 
-                                : "bg-red-500/10 text-red-400"
-                          }`}>{r.status}</span>
-                        </td>
+                  {activeArchitectureTab === "sandbox" ? (
+                    sandboxReports.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="py-8 text-center text-white/30 italic">Click &quot;RUN SANDBOX SIMULATOR&quot; to inspect virtual dry-runs.</td>
                       </tr>
-                    ))
+                    ) : (
+                      sandboxReports.map((r, rIdx) => (
+                        <tr key={rIdx} className="border-b border-white/5 hover:bg-white/5 transition-all text-white/80">
+                          <td className="py-2.5 pr-4 pl-2 font-semibold text-[#C4A47C] truncate max-w-xs">{r.filepath}</td>
+                          <td className="py-2.5 pr-4 truncate max-w-xs">{r.filename}</td>
+                          <td className="py-2.5 pr-4 text-center font-bold text-amber-400">{r.isbn_detected || "NULL"}</td>
+                          <td className="py-2.5 pr-4 text-right">
+                            <span className="px-1.5 py-0.5 rounded text-[9px] uppercase font-bold bg-[#C4A47C]/10 text-[#C4A47C]">simulated</span>
+                          </td>
+                        </tr>
+                      ))
+                    )
+                  ) : (
+                    dbState.scanned_books.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="py-8 text-center text-white/30 italic">scanned_books is empty. Trigger sync to scan the filesystem.</td>
+                      </tr>
+                    ) : (
+                      dbState.scanned_books.map((r, rIdx) => (
+                        <tr key={rIdx} className="border-b border-white/5 hover:bg-white/5 transition-all text-white/80">
+                          <td className="py-2.5 pr-4 pl-2 font-semibold text-[#C4A47C] truncate max-w-xs">{r.filepath}</td>
+                          <td className="py-2.5 pr-4 truncate max-w-xs">{r.filename}</td>
+                          <td className="py-2.5 pr-4 text-center font-bold text-emerald-400">{r.isbn_detected || "NULL"}</td>
+                          <td className="py-2.5 pr-4 text-right">
+                            <span className={`px-1.5 py-0.5 rounded text-[9px] uppercase font-bold ${
+                              r.status === "completed" 
+                                ? "bg-emerald-500/10 text-emerald-400" 
+                                : r.status === "processing" 
+                                  ? "bg-amber-500/10 text-amber-500 animate-pulse" 
+                                  : "bg-red-500/10 text-red-400"
+                            }`}>{r.status}</span>
+                          </td>
+                        </tr>
+                      ))
+                    )
                   )}
                 </tbody>
               </table>
@@ -546,30 +659,65 @@ export default function PipelineSandbox() {
                   </tr>
                 </thead>
                 <tbody>
-                  {dbState.file_organization.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="py-8 text-center text-white/30 italic">file_organization has no final records. Trigger sync above.</td>
-                    </tr>
-                  ) : (
-                    dbState.file_organization.map((r, rIdx) => (
-                      <tr key={rIdx} className="border-b border-white/5 hover:bg-white/5 transition-all text-white/80">
-                        <td className="py-2.5 pr-4 pl-2 font-bold text-emerald-400 truncate max-w-xs" title={r.dest_path}>{r.dest_path.substring(r.dest_path.lastIndexOf("/") + 1)}</td>
-                        <td className="py-2.5 pr-4">
-                          <p className="font-semibold text-white/90">{r.title}</p>
-                          <p className="text-[10px] text-white/40">{r.author} &bull; {r.year || "Unknown"} &bull; {r.genre}</p>
-                        </td>
-                        <td className="py-2.5 pr-4 text-center">
-                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                            r.confidence >= 85 
-                              ? "bg-emerald-500/10 text-emerald-400" 
-                              : r.confidence >= 70 
-                                ? "bg-amber-500/10 text-amber-500" 
-                                : "bg-red-500/10 text-red-400"
-                          }`}>{r.confidence}%</span>
-                        </td>
-                        <td className="py-2.5 pr-2 text-right text-white/40 text-[10px] truncate max-w-xs" title={r.notes}>{r.notes}</td>
+                  {activeArchitectureTab === "sandbox" ? (
+                    sandboxReports.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="py-8 text-center text-white/30 italic">Click &quot;RUN SANDBOX SIMULATOR&quot; to compute zero-mutation paths in memory.</td>
                       </tr>
-                    ))
+                    ) : (
+                      sandboxReports.map((r, rIdx) => {
+                        const m = r.projected_metadata || {};
+                        return (
+                          <tr key={rIdx} className="border-b border-white/5 hover:bg-white/5 transition-all text-white/80">
+                            <td className="py-2.5 pr-4 pl-2 font-bold text-amber-400 truncate max-w-xs" title={r.projected_destination}>
+                              {r.projected_destination ? r.projected_destination.substring(r.projected_destination.lastIndexOf("/") + 1) : "simulation_only.pdf"}
+                            </td>
+                            <td className="py-2.5 pr-4">
+                              <p className="font-semibold text-white/90">{m.title || "Unknown Title"}</p>
+                              <p className="text-[10px] text-white/40">{m.author || "Unknown Author"} &bull; {m.year || "Unknown Year"} &bull; {m.genre || "Uncategorized"}</p>
+                            </td>
+                            <td className="py-2.5 pr-4 text-center">
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                r.confidence >= 85 
+                                  ? "bg-amber-500/10 text-amber-400" 
+                                  : r.confidence >= 70 
+                                    ? "bg-amber-500/10 text-amber-500" 
+                                    : "bg-red-500/10 text-red-400"
+                              }`}>{r.confidence || 100}%</span>
+                            </td>
+                            <td className="py-2.5 pr-2 text-right text-amber-500/50 text-[10px] truncate max-w-xs" title={r.notes || "Core dry-run calculation resolved."}>
+                              {r.notes || "Core Dry-Run simulation success."}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )
+                  ) : (
+                    dbState.file_organization.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="py-8 text-center text-white/30 italic">file_organization has no final records. Trigger persistent organizer above.</td>
+                      </tr>
+                    ) : (
+                      dbState.file_organization.map((r, rIdx) => (
+                        <tr key={rIdx} className="border-b border-white/5 hover:bg-white/5 transition-all text-white/80">
+                          <td className="py-2.5 pr-4 pl-2 font-bold text-emerald-400 truncate max-w-xs" title={r.dest_path}>{r.dest_path.substring(r.dest_path.lastIndexOf("/") + 1)}</td>
+                          <td className="py-2.5 pr-4">
+                            <p className="font-semibold text-white/90">{r.title}</p>
+                            <p className="text-[10px] text-white/40">{r.author} &bull; {r.year || "Unknown"} &bull; {r.genre}</p>
+                          </td>
+                          <td className="py-2.5 pr-4 text-center">
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                              r.confidence >= 85 
+                                ? "bg-emerald-500/10 text-emerald-400" 
+                                : r.confidence >= 70 
+                                  ? "bg-amber-500/10 text-amber-500" 
+                                  : "bg-red-500/10 text-red-400"
+                            }`}>{r.confidence}%</span>
+                          </td>
+                          <td className="py-2.5 pr-2 text-right text-white/40 text-[10px] truncate max-w-xs" title={r.notes}>{r.notes}</td>
+                        </tr>
+                      ))
+                    )
                   )}
                 </tbody>
               </table>
@@ -591,16 +739,27 @@ export default function PipelineSandbox() {
           </div>
           
           <div className="flex-1 bg-[#121210] p-4 rounded-lg font-mono text-[10px] text-zinc-400 overflow-y-auto flex flex-col gap-1.5 border border-white/5">
-            {pipelineLogs.length === 0 ? (
-              <span className="text-white/20 italic">No activity logs recorded. Launch the organizer sync to generate logs.</span>
+            {activeArchitectureTab === "sandbox" ? (
+              sandboxLogs.length === 0 ? (
+                <span className="text-white/20 italic">No sandbox logs computed yet. Click &quot;RUN SANDBOX SIMULATOR&quot; above to simulate book calculations with zero-side-effects in memory.</span>
+              ) : (
+                sandboxLogs.map((log, lIdx) => (
+                  <div key={lIdx} className="leading-relaxed text-amber-300 hover:text-white transition-colors break-words">
+                    <span className="text-amber-500 font-bold select-none">[sim] {`>`}</span> {log}
+                  </div>
+                ))
+              )
             ) : (
-              pipelineLogs.map((log, lIdx) => (
-                <div key={lIdx} className="leading-relaxed hover:text-[#E4E4E0] transition-colors break-words">
-                  <span className="text-white/25 select-none">{`>`}</span> {log}
-                </div>
-              ))
+              pipelineLogs.length === 0 ? (
+                <span className="text-white/20 italic">No activity logs recorded. Launch the organizer sync to generate logs.</span>
+              ) : (
+                pipelineLogs.map((log, lIdx) => (
+                  <div key={lIdx} className="leading-relaxed hover:text-[#E4E4E0] transition-colors break-words">
+                    <span className="text-white/25 select-none">{`>`}</span> {log}
+                  </div>
+                ))
+              )
             )}
-
           </div>
         </div>
       </div>
