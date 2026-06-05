@@ -44,6 +44,10 @@
               base != "node_modules" && base != "dist" && base != ".git" && base != ".tessdata";
           };
 
+          postPatch = ''
+            cp ${./package-lock.json} package-lock.json
+          '';
+
           npmDepsHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; # Placeholder, can be overridden with a fixed derivation or used locally
 
           # Nix builders skip dynamic network calls; local build can bypass
@@ -146,17 +150,11 @@
                 after = [ "network.target" ];
                 wantedBy = [ "multi-user.target" ];
 
-                preStart = ''
-                  mkdir -p ${cfg.stateDir}
-                  ln -sfn ${self.packages.${pkgs.system}.librarian-web}/lib/node_modules/librarian/dist ${cfg.stateDir}/dist
-                '';
-
                 serviceConfig = {
                   Type = "simple";
                   User = "root"; # Needed to read and write any scanning source folders configured in web app
-                  WorkingDirectory = cfg.stateDir;
                   StateDirectory = "librarian-web";
-                  ExecStart = "${pkgs.nodejs}/bin/node ${cfg.stateDir}/dist/server.cjs";
+                  ExecStart = "${pkgs.bash}/bin/bash -c 'mkdir -p ${cfg.stateDir} && ln -sfn ${self.packages.${pkgs.system}.librarian-web}/lib/node_modules/librarian/dist ${cfg.stateDir}/dist && cd ${cfg.stateDir} && exec ${pkgs.nodejs}/bin/node dist/server.cjs'";
                   Restart = "on-failure";
                   EnvironmentFiles = lib.optional (cfg.apiKeyFile != null) cfg.apiKeyFile;
                 };
