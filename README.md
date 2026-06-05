@@ -135,6 +135,27 @@ Add the modern unified service configuration to `/etc/nixos/configuration.nix`:
 }
 ```
 
+##### 🌟 Nix Flakes Troubleshooting: "Missing package-lock.json"
+Because Nix Flakes are strictly bound to **Git-tracked files**, any untracked or modified files in your local directory (such as `.nix-config`) are completely hidden from the Nix builder sandbox. This will cause the build to fail with the following error:
+```bash
+ERROR: Missing package-lock.json from src. Expected to find it at: /build/librarian-web/package-lock.json
+```
+
+**To fix this issue instantly:**
+1. Ensure `package-lock.json` is staged or tracked in your Git tree:
+   ```bash
+   git add package-lock.json package.json flake.nix
+   ```
+2. If `package-lock.json` is missing entirely on your host system because you don't have Node/NPM globally installed, you can generate it using the environment's `devShell` with zero global pollution:
+   ```bash
+   nix develop -c npm install --package-lock-only
+   git add package-lock.json
+   ```
+3. Re-run your `nixos-rebuild` command:
+   ```bash
+   sudo nixos-rebuild switch --flake .#default
+   ```
+
 ---
 
 #### GNU Guix (Pure shell Environment & Shepherd Service)
