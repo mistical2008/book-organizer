@@ -175,6 +175,66 @@ function initFilesystem() {
   } catch (e) {}
 }
 
+function isValidIsbn10(isbn: string): boolean {
+  const clean = isbn.replace(/[^0-9X]/gi, "").toUpperCase();
+  if (clean.length !== 10) return false;
+  let sum = 0;
+  for (let i = 0; i < 9; i++) {
+    const digit = parseInt(clean[i], 10);
+    if (isNaN(digit)) return false;
+    sum += (10 - i) * digit;
+  }
+  const lastChar = clean[9];
+  let lastVal = 0;
+  if (lastChar === "X") {
+    lastVal = 10;
+  } else {
+    lastVal = parseInt(lastChar, 10);
+    if (isNaN(lastVal)) return false;
+  }
+  sum += lastVal;
+  return sum % 11 === 0;
+}
+
+function isValidIsbn13(isbn: string): boolean {
+  const clean = isbn.replace(/[^0-9]/g, "");
+  if (clean.length !== 13) return false;
+  let sum = 0;
+  for (let i = 0; i < 13; i++) {
+    const digit = parseInt(clean[i], 10);
+    if (isNaN(digit)) return false;
+    sum += (i % 2 === 0 ? 1 : 3) * digit;
+  }
+  return sum % 10 === 0;
+}
+
+function isValidIsbn(isbn: string): boolean {
+  const clean = isbn.replace(/[^0-9X]/gi, "").toUpperCase();
+  if (clean.length === 10) {
+    return isValidIsbn10(clean);
+  } else if (clean.length === 13) {
+    return isValidIsbn13(clean);
+  }
+  return false;
+}
+
+function extractValidIsbn(text: string): string | null {
+  if (!text) return null;
+  // Match any sequence of 10 or 13 characters that look like book identifiers
+  const isbnRegex = /(?:ISBN(?:[- ]*1[03])?:?\s*)?((?:97[89][- ]?)?(?:\d[- ]?){9}[\dXx])/gi;
+  let match;
+  while ((match = isbnRegex.exec(text)) !== null) {
+    const raw = match[1];
+    if (raw) {
+      const clean = raw.replace(/[- ]/g, "");
+      if (isValidIsbn(clean)) {
+        return clean;
+      }
+    }
+  }
+  return null;
+}
+
 function queryGoogleBooksByIsbn(isbn: string): Promise<any> {
   return new Promise((resolve, reject) => {
     const cleanIsbn = isbn.replace(/\D/g, "");
@@ -453,9 +513,13 @@ async function runLibrarianSync() {
 
       // Check if processed already
       const scanRecordIdx = state.scanned_books.findIndex((r: any) => r.filepath === filepath);
-      const isAlreadyCompleted = scanRecordIdx >= 0 && state.scanned_books[scanRecordIdx].status === "completed";
+      const isAlreadyProcessed = scanRecordIdx >= 0 && (
+        state.scanned_books[scanRecordIdx].status === "completed" || 
+        state.scanned_books[scanRecordIdx].status === "failed" ||
+        state.scanned_books[scanRecordIdx].status === "low_confidence"
+      );
 
-      if (isAlreadyCompleted && config.enableCaching !== false) {
+      if (isAlreadyProcessed && config.enableCaching !== false) {
         continue;
       }
 
@@ -489,10 +553,8 @@ async function runLibrarianSync() {
         }
       }
 
-      // Check ISBN inside text
-      const isbnRegex = /(?:ISBN(?:[- ]*1[03])?:?\s*)?((?:97[89][- ]?)?(?:\d[- ]?){9}[\dXx])/i;
-      const match = textContent.match(isbnRegex);
-      const isbnResolved = match ? match[1].replace(/[- ]/g, "") : null;
+      // Check ISBN inside text with checksum verification to prevent invalid/bogus queries
+      const isbnResolved = extractValidIsbn(textContent);
 
       if (isbnResolved) {
         scanRecord.isbn_detected = isbnResolved;
@@ -586,95 +648,106 @@ async function runLibrarianSync() {
 
       // 3. Move and Organize File
       if (metadata) {
-        const author = metadata.author || "Unknown Author";
-        const title = metadata.title || "Unknown Title";
-        const year = metadata.year ? String(metadata.year) : "Unknown Year";
-        const genre = metadata.genre || "Uncategorized";
-        const isbn = metadata.isbn || isbnResolved || "No ISBN";
-
-        let computedName = destTemplate
-          .replace(/{Author}/g, author)
-          .replace(/{Title}/g, title)
-          .replace(/{Year}/g, year)
-          .replace(/{Genre}/g, genre)
-          .replace(/{ISBN}/g, isbn);
-
-        // Split by slashes to find subdirectories defined inside the template (e.g. "{Genre}/{Author} - {Title}")
-        const rawSegments = computedName.split(/[/\\]+/);
-        const fileBaseSegment = rawSegments.pop() || "Untitled Book";
-
-        // Sanitize the file name and directory components separately
-        const fileBaseName = fileBaseSegment.replace(/[/\\?%*:|"<>\s]+/g, " ").trim();
-        const templateSubDirs = rawSegments.map(seg => seg.replace(/[/\\?%*:|"<>\s]+/g, "_").trim()).filter(Boolean);
-
-        // Ensure we build our target path starting from output directory
-        const parentFolderSegments = [resolvedOutputDir];
-        if (templateSubDirs.length > 0) {
-          parentFolderSegments.push(...templateSubDirs);
+        const confidence = metadata.confidence || 0;
+        if (confidence < confidenceThreshold) {
+          addServerLog(`[Warning] Metadata confidence (${confidence}/100) is below threshold (${confidenceThreshold}%). Skipping file relocation to prevent misclassification.`);
+          
+          // Update scan register to low_confidence so we cache it and avoid retries
+          const finalScanIdx = state.scanned_books.findIndex((r: any) => r.filepath === filepath);
+          if (finalScanIdx >= 0) {
+            state.scanned_books[finalScanIdx].status = "low_confidence";
+          }
         } else {
-          parentFolderSegments.push(genre.replace(/[/\\?%*:|"<>\s]+/g, "_"));
-        }
+          const author = metadata.author || "Unknown Author";
+          const title = metadata.title || "Unknown Title";
+          const year = (metadata.year && Number(metadata.year) > 0) ? String(metadata.year) : "Unknown Year";
+          const genre = metadata.genre || "Uncategorized";
+          const isbn = metadata.isbn || isbnResolved || "No ISBN";
 
-        // Feature: Each book should be stored under a folder with the same name as the file (excluding extension)
-        const fileFolder = fileBaseName;
-        parentFolderSegments.push(fileFolder);
+          let computedName = destTemplate
+            .replace(/{Author}/g, author)
+            .replace(/{Title}/g, title)
+            .replace(/{Year}/g, year)
+            .replace(/{Genre}/g, genre)
+            .replace(/{ISBN}/g, isbn);
 
-        const categoryFolder = path.join(...parentFolderSegments);
-        const originalExt = path.extname(filename) || ".pdf";
-        const targetFilename = `${fileBaseName}${originalExt}`;
-        const finalDestPath = path.join(categoryFolder, targetFilename);
+          // Split by slashes to find subdirectories defined inside the template (e.g. "{Genre}/{Author} - {Title}")
+          const rawSegments = computedName.split(/[/\\]+/);
+          const fileBaseSegment = rawSegments.pop() || "Untitled Book";
 
-        addServerLog(`[Relocating System] Moving ${filename} to: ${finalDestPath}`);
+          // Sanitize the file name and directory components separately
+          const fileBaseName = fileBaseSegment.replace(/[/\\?%*:|"<>\s]+/g, " ").trim();
+          const templateSubDirs = rawSegments.map(seg => seg.replace(/[/\\?%*:|"<>\s]+/g, "_").trim()).filter(Boolean);
 
-        try {
-          if (!fs.existsSync(categoryFolder)) {
-            fs.mkdirSync(categoryFolder, { recursive: true });
+          // Ensure we build our target path starting from output directory
+          const parentFolderSegments = [resolvedOutputDir];
+          if (templateSubDirs.length > 0) {
+            parentFolderSegments.push(...templateSubDirs);
+          } else {
+            parentFolderSegments.push(genre.replace(/[/\\?%*:|"<>\s]+/g, "_"));
           }
 
-          // Write file copies to destination folder
-          fs.copyFileSync(filepath, finalDestPath);
+          // Feature: Each book should be stored under a folder with the same name as the file (excluding extension)
+          const fileFolder = fileBaseName;
+          parentFolderSegments.push(fileFolder);
 
-          // If cleanup is enabled, purge original
-          if (config.autoCleanup) {
-            try {
-              fs.unlinkSync(filepath);
-              addServerLog(`[Purged original file] ${filename}`);
-            } catch (unlinkErr: any) {
-              addServerLog(`Cleanup error, file busy: ${unlinkErr.message}`);
+          const categoryFolder = path.join(...parentFolderSegments);
+          const originalExt = path.extname(filename) || ".pdf";
+          const targetFilename = `${fileBaseName}${originalExt}`;
+          const finalDestPath = path.join(categoryFolder, targetFilename);
+
+          addServerLog(`[Relocating System] Moving ${filename} to: ${finalDestPath}`);
+
+          try {
+            if (!fs.existsSync(categoryFolder)) {
+              fs.mkdirSync(categoryFolder, { recursive: true });
             }
-          }
 
-          // Register in file_organization state tables
-          const orgIdx = state.file_organization.findIndex((r: any) => r.filepath === filepath);
-          const orgRecord = {
-            filepath,
-            dest_path: finalDestPath,
-            author,
-            title,
-            year: metadata.year ? Number(metadata.year) : null,
-            genre,
-            isbn: metadata.isbn || null,
-            confidence: metadata.confidence || 100,
-            status: "completed",
-            notes: `Organized into catalog. Sourced from: ${syncSource}. Comments: ${metadata.notes || "None"}`,
-            timestamp: new Date().toISOString()
-          };
+            // Write file copies to destination folder
+            fs.copyFileSync(filepath, finalDestPath);
 
-          if (orgIdx >= 0) state.file_organization[orgIdx] = orgRecord;
-          else state.file_organization.push(orgRecord);
+            // If cleanup is enabled, purge original
+            if (config.autoCleanup) {
+              try {
+                fs.unlinkSync(filepath);
+                addServerLog(`[Purged original file] ${filename}`);
+              } catch (unlinkErr: any) {
+                addServerLog(`Cleanup error, file busy: ${unlinkErr.message}`);
+              }
+            }
 
-          // Update scan register to completed
-          const finalScanIdx = state.scanned_books.findIndex((r: any) => r.filepath === filepath);
-          if (finalScanIdx >= 0) {
-            state.scanned_books[finalScanIdx].status = "completed";
-          }
+            // Register in file_organization state tables
+            const orgIdx = state.file_organization.findIndex((r: any) => r.filepath === filepath);
+            const orgRecord = {
+              filepath,
+              dest_path: finalDestPath,
+              author,
+              title,
+              year: (metadata.year && Number(metadata.year) > 0) ? Number(metadata.year) : null,
+              genre,
+              isbn: metadata.isbn || null,
+              confidence: metadata.confidence || 100,
+              status: "completed",
+              notes: `Organized into catalog. Sourced from: ${syncSource}. Comments: ${metadata.notes || "None"}`,
+              timestamp: new Date().toISOString()
+            };
 
-          processedCount++;
-        } catch (orgErr: any) {
-          addServerLog(`[Movement Task Error] ${orgErr.message}`);
-          const finalScanIdx = state.scanned_books.findIndex((r: any) => r.filepath === filepath);
-          if (finalScanIdx >= 0) {
-            state.scanned_books[finalScanIdx].status = "failed";
+            if (orgIdx >= 0) state.file_organization[orgIdx] = orgRecord;
+            else state.file_organization.push(orgRecord);
+
+            // Update scan register to completed
+            const finalScanIdx = state.scanned_books.findIndex((r: any) => r.filepath === filepath);
+            if (finalScanIdx >= 0) {
+              state.scanned_books[finalScanIdx].status = "completed";
+            }
+
+            processedCount++;
+          } catch (orgErr: any) {
+            addServerLog(`[Movement Task Error] ${orgErr.message}`);
+            const finalScanIdx = state.scanned_books.findIndex((r: any) => r.filepath === filepath);
+            if (finalScanIdx >= 0) {
+              state.scanned_books[finalScanIdx].status = "failed";
+            }
           }
         }
       }

@@ -271,6 +271,42 @@ export default function CodeGenerator() {
 (defn save-state! [state]
   (spit db-path (json/generate-string state {:pretty true})))
 
+(defn isbn-10? [isbn]
+  (let [clean (str/upper-case (str/replace isbn #"[^0-9X]" ""))]
+    (if (= (count clean) 10)
+      (try
+        (let [digits (map #(if (= % \\X) 10 (Character/digit % 10)) (subs clean 0 9))
+              last-char (last clean)
+              last-val (if (= last-char \\X) 10 (Character/digit last-char 10))
+              sum (reduce + (map * (range 10 1 -1) digits))]
+          (and (every? #(>= % 0) digits)
+               (>= last-val 0)
+               (zero? (mod (+ sum last-val) 11))))
+        (catch Exception _ false))
+      false)))
+
+(defn isbn-13? [isbn]
+  (let [clean (str/replace isbn #"[^0-9]" "")]
+    (if (= (count clean) 13)
+      (try
+        (let [digits (map #(Character/digit % 10) clean)
+              weights (cycle [1 3])
+              sum (reduce + (map * weights digits))]
+          (and (every? #(>= % 0) digits)
+               (zero? (mod sum 10))))
+        (catch Exception _ false))
+      false)))
+
+(defn valid-isbn? [isbn]
+  (or (isbn-10? isbn) (isbn-13? isbn)))
+
+(defn extract-valid-isbn [text]
+  (if (str/blank? text)
+    nil
+    (let [pattern #"(?i)(?:ISBN(?:[- ]*1[03])?:?\\s*)?((?:97[89][- ]?)?(?:\\d[- ]?){9}[\\dXx])"
+          matches (re-seq pattern text)]
+      (first (filter valid-isbn? (map #(str/replace (second %) #"[- ]" "") matches))))))
+
 (defn query-google-books [isbn]
   (println (str "🔍 [Librarian] Seeking ISBN match: " isbn))
   (let [clean-isbn (str/replace isbn #"\\D" "")
@@ -286,7 +322,7 @@ export default function CodeGenerator() {
                 year (and pub-date (re-find #"\\d{4}" pub-date))]
             {:author (or author "Unknown Author")
              :title (or title "Unknown Title")
-             :year (if year (Integer/parseInt year) nil)
+             :year (if (and year (> (Integer/parseInt year) 0)) (Integer/parseInt year) nil)
              :genre (or (first (:categories volume-info)) "General Study")
              :isbn clean-isbn
              :confidence 100
@@ -328,7 +364,7 @@ export default function CodeGenerator() {
 (defn compute-destination [meta]
   (let [author (or (:author meta) "Unknown Author")
         title (or (:title meta) "Unknown Title")
-        year (if (:year meta) (str (:year meta)) "Unknown Year")
+        year (if (and (:year meta) (> (int (:year meta)) 0)) (str (:year meta)) "Unknown Year")
         genre (or (:genre meta) "Uncategorized")
         isbn (or (:isbn meta) "No ISBN")
         path-name (-> destination-template
@@ -343,7 +379,7 @@ export default function CodeGenerator() {
 (defn process-book [file-path]
   (println "📖 Processing publication: " file-path)
   (let [ocr-text (run-ocr file-path)
-        isbn-match (re-find #"(?:ISBN[- ]?)?(?:97[89][- ]?)?\\\\d{1,5}[- ]?\\\\d{1,7}[- ]?\\\\d{1,7}[- ]?[\\\\dX]" ocr-text)
+        isbn-match (extract-valid-isbn ocr-text)
         metadata (or (and isbn-match (query-google-books isbn-match))
                      (extract-via-gemini ocr-text))]
     (if (and metadata (>= (or (:confidence metadata) 0) confidence-threshold))
@@ -378,7 +414,7 @@ export default function CodeGenerator() {
         {:status "completed" :meta metadata :destination final-dest})
       (do
         (println "❌ Metadata extraction did not meet confidence threshold.")
-        {:status "failed" :reason "Low confidence"}))))
+        {:status "low_confidence" :reason "Low confidence"}))))
 
 (defn -main []
   (println "================================================")
@@ -390,10 +426,11 @@ export default function CodeGenerator() {
                       (mapcat #(.listFiles (io/file %)) resolved-inputs))]
     (doseq [file files]
       (let [path (.getAbsolutePath file)]
-        (if (and enable-caching? (= (get-in state [path :status]) "completed"))
-          (println "⏭️ Skipping cached file: " path)
-          (let [res (process-book path)]
-            (save-state! (assoc state path res)))))))
+        (let [cached-status (get-in state [path :status])]
+          (if (and enable-caching? (and cached-status (or (= cached-status "completed") (= cached-status "failed") (= cached-status "low_confidence"))))
+            (println "⏭️ Skipping cached file: " path)
+            (let [res (process-book path)]
+              (save-state! (assoc state path res)))))))))
   (println "✅ [Librarian] Library scanning successfully completed."))
 
 (when (= *file* (System/getProperty "babashka.file"))
