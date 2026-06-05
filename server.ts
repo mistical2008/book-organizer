@@ -2,11 +2,28 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import https from "https";
+import os from "os";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 
 dotenv.config();
+
+// Helper to resolve paths containing "~" (home folder) and relative segments
+function resolvePath(dir: string | null | undefined): string {
+  if (!dir) return "";
+  const trimmed = dir.trim();
+  if (trimmed.startsWith("~")) {
+    const home = os.homedir();
+    if (trimmed === "~") {
+      return home;
+    }
+    if (trimmed.startsWith("~/") || trimmed.startsWith("~\\")) {
+      return path.join(home, trimmed.slice(2));
+    }
+  }
+  return path.resolve(trimmed);
+}
 
 // Create application data directories on the host/container
 const DATA_DIR = path.resolve(process.cwd(), "data");
@@ -131,12 +148,13 @@ function initFilesystem() {
   // Ensure active paths
   try {
     const activeConf = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
-    const mainInput = activeConf.inputDirs ? activeConf.inputDirs[0] : activeConf.inputDir;
+    const mainInput = resolvePath(activeConf.inputDirs ? activeConf.inputDirs[0] : activeConf.inputDir);
+    const resolvedOutput = resolvePath(activeConf.outputDir);
     if (!fs.existsSync(mainInput)) {
       fs.mkdirSync(mainInput, { recursive: true });
     }
-    if (!fs.existsSync(activeConf.outputDir)) {
-      fs.mkdirSync(activeConf.outputDir, { recursive: true });
+    if (!fs.existsSync(resolvedOutput)) {
+      fs.mkdirSync(resolvedOutput, { recursive: true });
     }
     seedDemoFiles(mainInput);
   } catch (e) {}
@@ -367,7 +385,7 @@ async function runLibrarianSync() {
     const state = JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
 
     const inputDirs = config.inputDirs || [config.inputDir];
-    const outputDir = config.outputDir;
+    const resolvedOutputDir = resolvePath(config.outputDir);
     const destTemplate = config.destinationTemplate || "{Author} - {Title} ({Year})";
     const confidenceThreshold = config.confidenceThreshold || 70;
     const geminiModel = config.geminiModel || "gemini-3.5-flash";
@@ -376,7 +394,7 @@ async function runLibrarianSync() {
     const filesToProcess: { filepath: string; filename: string }[] = [];
 
     inputDirs.forEach((dir: string) => {
-      const resolvedDir = path.resolve(dir);
+      const resolvedDir = resolvePath(dir);
       if (fs.existsSync(resolvedDir)) {
         try {
           const items = fs.readdirSync(resolvedDir);
@@ -564,7 +582,7 @@ async function runLibrarianSync() {
         const originalExt = path.extname(filename) || ".pdf";
         const targetFilename = `${sanitizedName}${originalExt}`;
 
-        const categoryFolder = path.join(outputDir, genre.replace(/[/\\?%*:|"<>\s]+/g, "_"));
+        const categoryFolder = path.join(resolvedOutputDir, genre.replace(/[/\\?%*:|"<>\s]+/g, "_"));
         const finalDestPath = path.join(categoryFolder, targetFilename);
 
         addServerLog(`[Relocating System] Moving ${filename} to: ${finalDestPath}`);
@@ -727,7 +745,7 @@ async function startServer() {
       let inputFilesCount = 0;
       const inputDirs = config.inputDirs || [config.inputDir];
       inputDirs.forEach((dir: string) => {
-        const resolved = path.resolve(dir);
+        const resolved = resolvePath(dir);
         if (fs.existsSync(resolved)) {
           try {
             const files = fs.readdirSync(resolved);
@@ -742,7 +760,7 @@ async function startServer() {
       });
 
       let sortedFilesCount = 0;
-      const outputDir = path.resolve(config.outputDir);
+      const outputDir = resolvePath(config.outputDir);
       if (fs.existsSync(outputDir)) {
         try {
           const recurseCount = (dirPath: string) => {
@@ -811,7 +829,7 @@ async function startServer() {
   app.post("/api/reset-demo", (req, res) => {
     try {
       const config = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
-      const mainInput = config.inputDirs ? config.inputDirs[0] : config.inputDir;
+      const mainInput = resolvePath(config.inputDirs ? config.inputDirs[0] : config.inputDir);
 
       if (!fs.existsSync(mainInput)) {
         fs.mkdirSync(mainInput, { recursive: true });
@@ -826,7 +844,7 @@ async function startServer() {
       };
       fs.writeFileSync(STATE_FILE, JSON.stringify(clearedState, null, 2));
 
-      const outputFolder = path.resolve(config.outputDir);
+      const outputFolder = resolvePath(config.outputDir);
       if (fs.existsSync(outputFolder)) {
         try {
           const deleteRecursive = (dirPath: string) => {
@@ -863,7 +881,7 @@ async function startServer() {
       const results: string[] = [];
 
       inputDirs.forEach((dir: string) => {
-        const resolved = path.resolve(dir);
+        const resolved = resolvePath(dir);
         if (fs.existsSync(resolved)) {
           try {
             const files = fs.readdirSync(resolved);
@@ -891,7 +909,7 @@ async function startServer() {
       }
 
       const config = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
-      const mainInput = config.inputDirs ? config.inputDirs[0] : config.inputDir;
+      const mainInput = resolvePath(config.inputDirs ? config.inputDirs[0] : config.inputDir);
 
       if (!fs.existsSync(mainInput)) {
         fs.mkdirSync(mainInput, { recursive: true });
@@ -907,6 +925,92 @@ async function startServer() {
       res.json({ success: true, filename: normalizedFilename });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
+    }
+  });
+
+  // REST API: Browse directory contents for file browser dialogs
+  app.get("/api/system/browse", (req, res) => {
+    try {
+      let targetPath = (req.query.path as string) || "";
+      if (!targetPath) {
+        // Find default from config or use working directory
+        try {
+          if (fs.existsSync(CONFIG_FILE)) {
+            const config = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
+            targetPath = config.inputDirs ? config.inputDirs[0] : config.inputDir;
+          }
+        } catch (_) {}
+      }
+
+      if (!targetPath) {
+        targetPath = process.cwd();
+      }
+
+      targetPath = resolvePath(targetPath);
+
+      if (!fs.existsSync(targetPath)) {
+        // Fallback to process.cwd() or / if it doesn't exist
+        targetPath = process.cwd();
+      }
+
+      const stats = fs.statSync(targetPath);
+      if (!stats.isDirectory()) {
+        targetPath = path.dirname(targetPath);
+      }
+
+      const items = fs.readdirSync(targetPath);
+      const directories: string[] = [];
+
+      items.forEach(item => {
+        try {
+          const full = path.join(targetPath, item);
+          const itemStats = fs.statSync(full);
+          if (itemStats.isDirectory()) {
+            directories.push(item);
+          }
+        } catch (err) {
+          // Skip directories without permissions
+        }
+      });
+
+      directories.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+
+      // Find root parsing
+      const isRoot = targetPath === path.parse(targetPath).root;
+      const parentPath = isRoot ? null : path.dirname(targetPath);
+
+      res.json({
+        currentPath: targetPath,
+        parentPath,
+        directories
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // REST API: Create new directory from file browser UI
+  app.post("/api/system/mkdir", (req, res) => {
+    try {
+      const { parentPath, folderName } = req.body;
+      if (!parentPath || !folderName) {
+        return res.status(400).json({ error: "parentPath and folderName are required" });
+      }
+
+      const cleanFolder = folderName.replace(/[/\\?%*:|"<>\s]+/g, "_").trim();
+      if (!cleanFolder) {
+        return res.status(400).json({ error: "Invalid folder name" });
+      }
+
+      const fullPath = path.join(resolvePath(parentPath), cleanFolder);
+      if (!fs.existsSync(fullPath)) {
+        fs.mkdirSync(fullPath, { recursive: true });
+        addServerLog(`Created new folder from web UI: ${fullPath}`);
+      }
+
+      res.json({ success: true, path: fullPath });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 

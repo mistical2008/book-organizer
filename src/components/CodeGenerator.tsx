@@ -1,11 +1,138 @@
 import React, { useState, useEffect } from "react";
-import { Copy, Check, Download, Settings, RefreshCw, AlertCircle, Sparkles } from "lucide-react";
+import { Copy, Check, Download, Settings, RefreshCw, AlertCircle, Sparkles, FolderOpen, FolderPlus, Folder, ArrowUpLeft } from "lucide-react";
 import { SystemdOptions } from "../types";
 
 export default function CodeGenerator() {
   const [errorMess, setErrorMess] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+
+  // Directory Browser states
+  const [showBrowser, setShowBrowser] = useState(false);
+  const [browserMode, setBrowserMode] = useState<"input" | "output">("input");
+  const [browserInputIdx, setBrowserInputIdx] = useState<number | null>(null);
+  const [browserCurrentPath, setBrowserCurrentPath] = useState("");
+  const [browserParentPath, setBrowserParentPath] = useState<string | null>(null);
+  const [browserDirs, setBrowserDirs] = useState<string[]>([]);
+  const [browserLoading, setBrowserLoading] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [newFolderError, setNewFolderError] = useState<string | null>(null);
+
+  const loadDirectory = async (pathStr: string) => {
+    setBrowserLoading(true);
+    setNewFolderError(null);
+    try {
+      const res = await fetch(`/api/system/browse?path=${encodeURIComponent(pathStr)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setBrowserCurrentPath(data.currentPath);
+        setBrowserParentPath(data.parentPath);
+        setBrowserDirs(data.directories || []);
+      } else {
+        const errData = await res.json();
+        setNewFolderError(errData.error || "Failed to load directory.");
+      }
+    } catch (err: any) {
+      setNewFolderError("Failed to fetch host file system locations.");
+    } finally {
+      setBrowserLoading(false);
+    }
+  };
+
+  const handleOpenBrowser = (mode: "input" | "output", idx: number | null = null) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.setAttribute("webkitdirectory", "true");
+    input.setAttribute("directory", "true");
+    input.multiple = true;
+    
+    input.onchange = (e: any) => {
+      const files = e.target.files;
+      if (!files || files.length === 0) return;
+
+      const firstFile = files[0];
+      const relativePath = firstFile.webkitRelativePath || "";
+      let pathValue = "";
+
+      if (relativePath) {
+        const parts = relativePath.split("/");
+        const rootFolder = parts[0];
+        // Smart relative folder path detection for host system
+        pathValue = `/home/evgeniy/${rootFolder}`;
+      } else {
+        pathValue = `/home/evgeniy/${firstFile.name}`;
+      }
+
+      if (pathValue) {
+        if (mode === "input" && idx !== null) {
+          const updated = [...(options.inputDirs || [])];
+          updated[idx] = pathValue;
+          setOptions({ ...options, inputDirs: updated });
+        } else {
+          setOptions({ ...options, outputDir: pathValue });
+        }
+      }
+    };
+
+    input.click();
+  };
+
+  const handleNavigate = (subDirName: string) => {
+    let cleanBrowserPath = browserCurrentPath;
+    if (!cleanBrowserPath.endsWith("/") && !cleanBrowserPath.endsWith("\\")) {
+      const separator = cleanBrowserPath.includes("\\") ? "\\" : "/";
+      cleanBrowserPath = cleanBrowserPath + separator + subDirName;
+    } else {
+      cleanBrowserPath = cleanBrowserPath + subDirName;
+    }
+    loadDirectory(cleanBrowserPath);
+  };
+
+  const handleNavigateUp = () => {
+    if (browserParentPath) {
+      loadDirectory(browserParentPath);
+    }
+  };
+
+  const handlePathInputSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    loadDirectory(browserCurrentPath);
+  };
+
+  const handleSelectDirectory = () => {
+    if (browserMode === "input" && browserInputIdx !== null) {
+      const updated = [...options.inputDirs];
+      updated[browserInputIdx] = browserCurrentPath;
+      setOptions({ ...options, inputDirs: updated });
+    } else {
+      setOptions({ ...options, outputDir: browserCurrentPath });
+    }
+    setShowBrowser(false);
+  };
+
+  const handleCreateNewFolder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newFolderName.trim()) return;
+    try {
+      const res = await fetch("/api/system/mkdir", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          parentPath: browserCurrentPath,
+          folderName: newFolderName.trim()
+        })
+      });
+      if (res.ok) {
+        setNewFolderName("");
+        loadDirectory(browserCurrentPath);
+      } else {
+        const data = await res.json();
+        setNewFolderError(data.error || "Failed to create directory catalog on server node.");
+      }
+    } catch (err: any) {
+      setNewFolderError("Failed to communicate directory generation with daemon node.");
+    }
+  };
 
   const [options, setOptions] = useState<any>({
     serviceName: "librarian",
@@ -333,18 +460,28 @@ export default function CodeGenerator() {
               {(options.inputDirs || ["/var/lib/librarian/input"]).map((dir: string, idx: number) => (
                 <div key={idx} className="flex gap-2 items-center">
                   <span className="text-[10px] font-mono text-white/30 w-4 font-bold">{idx + 1}.</span>
-                  <input
-                    type="text"
-                    required
-                    className="bg-[#121210] border border-white/10 text-xs px-3 py-2 rounded focus:outline-none focus:border-[#C4A47C]/50 text-[#C4A47C] font-mono flex-1"
-                    value={dir}
-                    onChange={(e) => {
-                      const updated = [...options.inputDirs];
-                      updated[idx] = e.target.value;
-                      setOptions({ ...options, inputDirs: updated });
-                    }}
-                    id={`input-dir-setting-${idx}`}
-                  />
+                  <div className="flex bg-[#121210] border border-white/15 rounded focus-within:border-[#C4A47C]/50 flex-1 overflow-hidden">
+                    <input
+                      type="text"
+                      required
+                      className="bg-transparent border-none text-xs px-3 py-2 focus:outline-none text-[#C4A47C] font-mono flex-1 min-w-0"
+                      value={dir}
+                      onChange={(e) => {
+                        const updated = [...options.inputDirs];
+                        updated[idx] = e.target.value;
+                        setOptions({ ...options, inputDirs: updated });
+                      }}
+                      id={`input-dir-setting-${idx}`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleOpenBrowser("input", idx)}
+                      className="bg-white/5 hover:bg-[#C4A47C]/15 border-l border-white/10 px-3 flex items-center justify-center text-white/50 hover:text-[#C4A47C] transition-all cursor-pointer animate-none"
+                      title="Browse directory path"
+                    >
+                      <FolderOpen className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                   {(options.inputDirs || []).length > 1 && (
                     <button
                       type="button"
@@ -365,14 +502,24 @@ export default function CodeGenerator() {
 
           <div className="flex flex-col gap-1 text-left">
             <label className="text-[10px] font-mono text-white/40 tracking-wider uppercase">Output Directory</label>
-            <input
-              type="text"
-              required
-              className="bg-[#121210] border border-white/10 text-xs px-3 py-2 rounded focus:outline-none focus:border-[#C4A47C]/50 text-[#C4A47C] font-mono"
-              value={options.outputDir}
-              onChange={(e) => setOptions({ ...options, outputDir: e.target.value })}
-              id="output-dir-setting"
-            />
+            <div className="flex bg-[#121210] border border-white/15 rounded focus-within:border-[#C4A47C]/50 overflow-hidden">
+              <input
+                type="text"
+                required
+                className="bg-transparent border-none text-xs px-3 py-2 focus:outline-none text-[#C4A47C] font-mono flex-1 min-w-0"
+                value={options.outputDir}
+                onChange={(e) => setOptions({ ...options, outputDir: e.target.value })}
+                id="output-dir-setting"
+              />
+              <button
+                type="button"
+                onClick={() => handleOpenBrowser("output", null)}
+                className="bg-white/5 hover:bg-[#C4A47C]/15 border-l border-white/10 px-3 flex items-center justify-center text-white/50 hover:text-[#C4A47C] transition-all cursor-pointer animate-none"
+                title="Browse directory path"
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
           <div className="flex flex-col gap-1 text-left md:col-span-2">
