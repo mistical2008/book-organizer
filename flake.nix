@@ -44,10 +44,6 @@
               base != "node_modules" && base != "dist" && base != ".git" && base != ".tessdata";
           };
 
-          postPatch = ''
-            cp ${./package-lock.json} package-lock.json
-          '';
-
           npmDepsHash = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="; # Placeholder, can be overridden with a fixed derivation or used locally
 
           # Nix builders skip dynamic network calls; local build can bypass
