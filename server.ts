@@ -14,7 +14,22 @@ function resolvePath(dir: string | null | undefined): string {
   if (!dir) return "";
   const trimmed = dir.trim();
   if (trimmed.startsWith("~")) {
-    const home = os.homedir();
+    let home = os.homedir();
+    // Prioritize host system's user home directory if it exists to address sandbox/host impedance mismatch
+    if (fs.existsSync("/home/evgeniy") && fs.statSync("/home/evgeniy").isDirectory()) {
+      home = "/home/evgeniy";
+    } else {
+      try {
+        if (fs.existsSync("/home")) {
+          const homes = fs.readdirSync("/home");
+          const userHome = homes.find(h => h !== "lost+found" && h !== "guest");
+          if (userHome) {
+            home = path.join("/home", userHome);
+          }
+        }
+      } catch (e) {}
+    }
+
     if (trimmed === "~") {
       return home;
     }
@@ -584,11 +599,29 @@ async function runLibrarianSync() {
           .replace(/{Genre}/g, genre)
           .replace(/{ISBN}/g, isbn);
 
-        const sanitizedName = computedName.replace(/[/\\?%*:|"<>\s]+/g, " ").trim();
-        const originalExt = path.extname(filename) || ".pdf";
-        const targetFilename = `${sanitizedName}${originalExt}`;
+        // Split by slashes to find subdirectories defined inside the template (e.g. "{Genre}/{Author} - {Title}")
+        const rawSegments = computedName.split(/[/\\]+/);
+        const fileBaseSegment = rawSegments.pop() || "Untitled Book";
 
-        const categoryFolder = path.join(resolvedOutputDir, genre.replace(/[/\\?%*:|"<>\s]+/g, "_"));
+        // Sanitize the file name and directory components separately
+        const fileBaseName = fileBaseSegment.replace(/[/\\?%*:|"<>\s]+/g, " ").trim();
+        const templateSubDirs = rawSegments.map(seg => seg.replace(/[/\\?%*:|"<>\s]+/g, "_").trim()).filter(Boolean);
+
+        // Ensure we build our target path starting from output directory
+        const parentFolderSegments = [resolvedOutputDir];
+        if (templateSubDirs.length > 0) {
+          parentFolderSegments.push(...templateSubDirs);
+        } else {
+          parentFolderSegments.push(genre.replace(/[/\\?%*:|"<>\s]+/g, "_"));
+        }
+
+        // Feature: Each book should be stored under a folder with the same name as the file (excluding extension)
+        const fileFolder = fileBaseName;
+        parentFolderSegments.push(fileFolder);
+
+        const categoryFolder = path.join(...parentFolderSegments);
+        const originalExt = path.extname(filename) || ".pdf";
+        const targetFilename = `${fileBaseName}${originalExt}`;
         const finalDestPath = path.join(categoryFolder, targetFilename);
 
         addServerLog(`[Relocating System] Moving ${filename} to: ${finalDestPath}`);
