@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { BookOpen, Cpu, Settings, Sparkles, Terminal, FileText, Check, ShieldAlert, ListFilter } from "lucide-react";
 import PipelineSandbox from "./components/PipelineSandbox";
+import LiveLoggingPanel from "./components/LiveLoggingPanel";
 import CodeGenerator from "./components/CodeGenerator";
 import LiveTester from "./components/LiveTester";
 import { motion } from "motion/react";
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<"sandbox" | "generator" | "tester" | "methodology">("sandbox");
+  const [activeTab, setActiveTab] = useState<"sandbox" | "logging" | "generator" | "tester" | "methodology">("sandbox");
 
   return (
     <div className="min-h-screen bg-[#0D0D0B] text-[#E4E4E0] flex flex-col font-sans transition-all duration-300 antialiased selection:bg-[#C4A47C] selection:text-[#0D0D0B]" id="librarian-app-root">
@@ -30,6 +31,7 @@ export default function App() {
         <div className="flex flex-wrap items-center gap-1.5 bg-white/5 p-1 rounded-lg border border-white/10" id="nav-tabs">
           {[
             { id: "sandbox", label: "Interactive Sandbox", icon: Cpu },
+            { id: "logging", label: "Logging", icon: Terminal },
             { id: "generator", label: "Daemon Scripts", icon: Settings },
             { id: "tester", label: "Live LLM Tester", icon: Sparkles },
             { id: "methodology", label: "Methodology Docs", icon: FileText }
@@ -92,6 +94,7 @@ export default function App() {
           className="h-full flex flex-col"
         >
           {activeTab === "sandbox" && <PipelineSandbox />}
+          {activeTab === "logging" && <LiveLoggingPanel />}
           {activeTab === "generator" && <CodeGenerator />}
           {activeTab === "tester" && <LiveTester />}
           {activeTab === "methodology" && (

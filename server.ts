@@ -376,10 +376,6 @@ async function runLibrarianSync() {
   }
 
   isProcessing = true;
-  addServerLog("----------------------------------------------------------------------");
-  addServerLog("🔍 INITIATING AUTOMATED LIBRARY SYNC PIPELINE RUN");
-  addServerLog("----------------------------------------------------------------------");
-
   try {
     const config = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
     const state = JSON.parse(fs.readFileSync(STATE_FILE, "utf-8"));
@@ -390,6 +386,16 @@ async function runLibrarianSync() {
     const confidenceThreshold = config.confidenceThreshold || 70;
     const geminiModel = config.geminiModel || "gemini-3.5-flash";
     const batchSize = config.batchSize || 5;
+
+    addServerLog("----------------------------------------------------------------------");
+    addServerLog("🔍 INITIATING AUTOMATED LIBRARY SYNC PIPELINE RUN");
+    addServerLog(`   ▷ Input Paths:           ${JSON.stringify(inputDirs)}`);
+    addServerLog(`   ▷ Target Directory:      ${resolvedOutputDir}`);
+    addServerLog(`   ▷ Destination Template:  "${destTemplate}"`);
+    addServerLog(`   ▷ Min AI Confidence:     ${confidenceThreshold}%`);
+    addServerLog(`   ▷ Gemini LLM Model:      ${geminiModel}`);
+    addServerLog(`   ▷ Max Batch Run Limit:   ${batchSize} books`);
+    addServerLog("----------------------------------------------------------------------");
 
     const filesToProcess: { filepath: string; filename: string }[] = [];
 
@@ -823,6 +829,13 @@ async function startServer() {
   // REST API: Fetch live system logging blocks for client console feeds
   app.get("/api/logs", (req, res) => {
     res.json({ logs });
+  });
+
+  // REST API: Clear the in-memory logging buffer
+  app.post("/api/logs/clear", (req, res) => {
+    logs.length = 0;
+    addServerLog("Console logs cleared by user operator.");
+    res.json({ success: true, logs });
   });
 
   // REST API: Erase sorted target dirs and reseed raw books for demo purposes
