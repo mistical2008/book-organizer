@@ -236,6 +236,29 @@ export default function CodeGenerator() {
 (def enable-caching? ${options.enableCaching !== false ? "true" : "false"})
 (def auto-cleanup? ${options.autoCleanup === true ? "true" : "false"})
 
+;; --- Path resolver for home directories and ~ expansion ---
+(defn resolve-path [dir-path]
+  (if (str/blank? dir-path)
+    ""
+    (let [trimmed (str/trim dir-path)]
+      (if (str/starts-with? trimmed "~")
+        (let [home-base (cond
+                          (and (.exists (io/file "/home/evgeniy")) (.isDirectory (io/file "/home/evgeniy")))
+                          "/home/evgeniy"
+                          
+                          (.exists (io/file "/home"))
+                          (let [homes (filter #(and (.isDirectory %) (not= (.getName %) "lost+found") (not= (.getName %) "guest"))
+                                              (.listFiles (io/file "/home")))]
+                            (if (seq homes)
+                              (.getAbsolutePath (first homes))
+                              (System/getProperty "user.home")))
+                          
+                          :else (System/getProperty "user.home"))]
+          (if (= trimmed "~")
+            home-base
+            (str home-base (subs trimmed 1))))
+        (.getAbsolutePath (io/file trimmed))))))
+
 ;; --- Persistent State Cache ---
 (def db-path "/var/lib/librarian-web/data/state.json")
 
@@ -325,8 +348,27 @@ export default function CodeGenerator() {
                      (extract-via-gemini ocr-text))]
     (if (and metadata (>= (or (:confidence metadata) 0) confidence-threshold))
       (let [dest-name (compute-destination metadata)
+            ;; Split by slashes to find subdirectories defined inside the template
+            raw-segments (str/split dest-name #"[/\\\\]+")
+            file-base-name (or (last raw-segments) "Untitled Book")
+            template-subdirs (filter #(not (str/blank? %)) (map sanitize (butlast raw-segments)))
+            
+            ;; Determine base directories via path resolver
+            resolved-out-dir (resolve-path output-dir)
+            
+            ;; Resolve category grouping subdirectories
+            genre (or (:genre metadata) "Uncategorized")
+            sub-dirs (if (seq template-subdirs)
+                       template-subdirs
+                       [(sanitize genre)])
+            
+            ;; Feature: Each book should be stored under a folder with the same name as the file (excluding extension)
+            file-folder (sanitize file-base-name)
+            
+            ;; Build category folder path
+            category-folder (str/join "/" (concat [resolved-out-dir] sub-dirs [file-folder]))
             ext (or (re-find #"\\.[a-zA-Z0-9]+$" file-path) ".pdf")
-            final-dest (str output-dir "/" dest-name ext)]
+            final-dest (str category-folder "/" (sanitize file-base-name) ext)]
         (println "✨ Metadata Resolved! confidence=" (:confidence metadata))
         (println "🚚 Relocating to: " final-dest)
         (io/make-parents final-dest)
@@ -343,8 +385,9 @@ export default function CodeGenerator() {
   (println "🤖 Librarian Clojure Babashka Daemon Live")
   (println "================================================")
   (let [state (load-state)
+        resolved-inputs (map resolve-path input-dirs)
         files (filter #(and (.isFile %) (re-find #"\\.(pdf|epub|djvu)$" (.getName %)))
-                      (mapcat #(.listFiles (io/file %)) input-dirs))]
+                      (mapcat #(.listFiles (io/file %)) resolved-inputs))]
     (doseq [file files]
       (let [path (.getAbsolutePath file)]
         (if (and enable-caching? (= (get-in state [path :status]) "completed"))
