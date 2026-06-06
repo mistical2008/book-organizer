@@ -79,20 +79,34 @@
 (defn extract-valid-isbn [text]
   (if (str/blank? text)
     nil
-    (let [pattern #"(?i)(?:ISBN(?:[- ]*1[03])?:?\s*)?((?:97[89][- ]?)?(?:\d[- ]?){9}[\dXx])"
-          matches (re-seq pattern text)]
-      (first (filter valid-isbn? (map #(str/replace (second %) #"[- ]" "") matches))))))
+    ;; 1. Accurate match with prefix
+    (let [prefix-pattern #"(?i)(?:[I1l|іІ!\[\]][S58sЅѕ][B8bВв][NnНнМм])(?:[- ]*1[03])?:?\s*([0-9Xx](?:[- ]?[0-9Xx]){9,12})"
+          prefix-matches (re-seq prefix-pattern text)
+          prefix-candidates (map #(str/replace (second %) #"[^0-9Xx]" "") prefix-matches)
+          valid-prefix (first (filter valid-isbn? prefix-candidates))]
+      (if (seq valid-prefix)
+        valid-prefix
+        ;; 2. Fallback to raw numeric sequences
+        (let [fallback-pattern #"\b[0-9Xx](?:[- ]?[0-9Xx]){9,12}\b"
+              fallback-matches (re-seq fallback-pattern text)
+              fallback-candidates (map #(str/replace % #"[^0-9Xx]" "") fallback-matches)]
+          (first (filter valid-isbn? fallback-candidates)))))))
 
 (defn query-google-books [isbn]
-  (println (str "🔍 [Librarian] Seeking ISBN match: " isbn))
+  (println (str "🔍 [Librarian] Seeking ISBN match via Google Books: " isbn))
   (let [clean-isbn (str/replace isbn #"\D" "")
-        url (str "https://www.googleapis.com/books/v1/volumes?q=isbn:" clean-isbn)]
+        config (load-config)
+        api-key (or (:googleBooksApiKey config) "AIzaSyDYh87ATtVXKn9rF55Plh-1mGJhWFmigU0")
+        url (if (str/blank? api-key)
+              (str "https://www.googleapis.com/books/v1/volumes?q=isbn:" clean-isbn)
+              (str "https://www.googleapis.com/books/v1/volumes?q=isbn:" clean-isbn "&key=" api-key))]
     (try
       (let [resp (http/get url {:headers {"User-Agent" "Librarian-Babashka/1.0"}})
             body (json/parse-string (:body resp) true)]
-        (if (and (> (:totalItems body) 0) (:items body))
+        (if (and (> (or (:totalItems body) 0) 0) (:items body))
           (let [volume-info (-> body :items first :volumeInfo)
-                author (str/join ", " (:authors volume-info))
+                authors (:authors volume-info)
+                author (if (seq authors) (str/join ", " authors) "Unknown Author")
                 title (:title volume-info)
                 pub-date (:publishedDate volume-info)
                 year (and pub-date (re-find #"\d{4}" pub-date))]
@@ -108,6 +122,42 @@
         (println "⚠️ Google Books lookup failure: " (.getMessage e))
         nil))))
 
+(defn query-open-library [isbn]
+  (println (str "🔍 [Librarian] Seeking ISBN match via Open Library: " isbn))
+  (let [clean-isbn (str/replace isbn #"\D" "")
+        url (str "https://openlibrary.org/api/books?bibkeys=ISBN:" clean-isbn "&format=json&jscmd=data")]
+    (try
+      (let [resp (http/get url {:headers {"User-Agent" "Librarian-Babashka/1.0"}})
+            body (json/parse-string (:body resp))
+            book-info (get body (str "ISBN:" clean-isbn))]
+        (if book-info
+          (let [authors (get book-info "authors")
+                author-names (map #(get % "name") authors)
+                author (if (seq author-names) (str/join ", " author-names) "Unknown Author")
+                title (get book-info "title")
+                pub-date (get book-info "publish_date")
+                year (and pub-date (re-find #"\d{4}" pub-date))
+                subjects (get book-info "subjects")
+                genre (if (seq subjects)
+                        (or (get (first subjects) "name") "General Study")
+                        "General Study")]
+            {:author (or (and (not (str/blank? author)) author) "Unknown Author")
+             :title (or title "Unknown Title")
+             :year (if year (Integer/parseInt year) nil)
+             :genre genre
+             :isbn clean-isbn
+             :confidence 100
+             :notes "Matched from Open Library Books API using Clojure Babashka Client."})
+          nil))
+      (catch Exception e
+        (println "⚠️ Open Library lookup failure: " (.getMessage e))
+        nil))))
+
+(defn query-book-metadata [isbn]
+  (let [clean-isbn (str/replace isbn #"\D" "")]
+    (or (query-google-books clean-isbn)
+        (query-open-library clean-isbn))))
+
 (defn run-ocr [file-path]
   (println "📝 [Librarian] Translating layout using local tesseract CLI: " file-path)
   (let [output-base (str file-path "-tmp-txt")
@@ -120,9 +170,10 @@
       "")))
 
 (defn extract-via-gemini [text gemini-model]
-  (let [api-key (System/getenv "GEMINI_API_KEY")]
+  (let [config (load-config)
+        api-key (or (:geminiApiKey config) (System/getenv "GEMINI_API_KEY"))]
     (if (str/blank? api-key)
-      (throw (Exception. "GEMINI_API_KEY env is required."))
+      (throw (Exception. "GEMINI_API_KEY environment variable or settings configuration is required."))
       (let [url (str "https://generativelanguage.googleapis.com/v1beta/models/" (or gemini-model "gemini-3.5-flash") ":generateContent?key=" api-key)
             system-prompt "Act as the Librarian Library Metadata Agent. Extract: author, title, year, genre, isbn. Return JSON: {author, title, year, genre, isbn, confidence, notes}."
             payload {:contents [{:parts [{:text (subs text 0 (min (count text) 4000))}]}]
@@ -160,9 +211,20 @@
         destination-template (:destinationTemplate config "{Author} - {Title} ({Year})")
         gemini-model (:geminiModel config "gemini-3.5-flash")
         auto-cleanup? (:autoCleanup config)
+        isbn-only? (:isbnOnlyRequests config)
         isbn-match (extract-valid-isbn ocr-text)
-        metadata (or (and isbn-match (query-google-books isbn-match))
-                     (extract-via-gemini ocr-text gemini-model))]
+        metadata (cond
+                   (and isbn-match (not (str/blank? isbn-match)))
+                   (query-book-metadata isbn-match)
+
+                   isbn-only?
+                   nil
+
+                   :else
+                   (try (extract-via-gemini ocr-text gemini-model)
+                        (catch Exception e
+                          (println "⚠️ Gemini extraction failure: " (.getMessage e))
+                          nil)))]
     (if (and metadata (>= (or (:confidence metadata) 0) confidence-threshold))
       (let [dest-name (compute-destination metadata destination-template)
             ;; Split by slashes to find subdirectories defined inside the template
@@ -217,7 +279,7 @@
                 ;; Update state
                 new-state (assoc-in state [:scanned_books path] res)]
             (save-state! new-state))))))
-  (println "✅ [Librarian] Library scanning successfully completed."))
+  (println "✅ [Librarian] Library scanning successfully completed.")))
 
 (when (= *file* (System/getProperty "babashka.file"))
   (-main))

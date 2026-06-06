@@ -15,5 +15,7 @@
   "processingMode": "batch",
   "batchSize": 5,
   "enableCaching": true,
+  "isbnOnlyRequests": false,
+  "googleBooksApiKey": "AIzaSyDYh87ATtVXKn9rF55Plh-1mGJhWFmigU0",
   "runInterval": "hourly"
 }

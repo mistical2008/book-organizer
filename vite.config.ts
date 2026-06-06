@@ -9,6 +9,8 @@ export default defineConfig(() => {
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
+        'reagent.core': path.resolve(__dirname, './src/cljs/reagent/core.js'),
+        'reagent.dom': path.resolve(__dirname, './src/cljs/reagent/dom.js'),
       },
     },
     server: {

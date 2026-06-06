@@ -17,11 +17,22 @@
         destination-template (:destinationTemplate config "{Author} - {Title} ({Year})")
         gemini-model (:geminiModel config "gemini-3.5-flash")
         auto-cleanup? (:autoCleanup config)
+        isbn-only? (:isbnOnlyRequests config)
         
         ;; Use Core equations to find ISBN and metadata
         isbn-match (core/extract-valid-isbn ocr-text)
-        metadata (or (and isbn-match (core/query-google-books isbn-match))
-                     (core/extract-via-gemini ocr-text gemini-model))]
+        metadata (cond
+                   (and isbn-match (not (str/blank? isbn-match)))
+                   (core/query-book-metadata isbn-match)
+
+                   isbn-only?
+                   nil
+
+                   :else
+                   (try (core/extract-via-gemini ocr-text gemini-model)
+                        (catch Exception e
+                          (println "⚠️ Gemini extraction failure: " (.getMessage e))
+                          nil)))]
                      
     (if (and metadata (>= (or (:confidence metadata) 0) confidence-threshold))
       (let [dest-name (core/compute-destination metadata destination-template)

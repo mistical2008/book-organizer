@@ -1,0 +1,45 @@
+(ns librarian.core-test
+  (:require [clojure.test :refer [deftest is testing run-tests]]
+            [librarian.core :refer [extract-valid-isbn]]))
+
+(def scanned-ocr-text
+  "ББК 81.2УКР-93
+Б78
+
+Допущено Міністерством освіти України
+(протокол № 4/1-18 від 25.03.98)
+
+Художники С. М. Железняк,
+О. В. Кузнєцова, Л. Г. Орлюк
+
+Бондаренко Н. В.
+Б78 Мальва: Післябукварна читанка.— Київ; Ірпінь: ВТФ
+«Перун», 1999.— 216 с. : іл.
+ISBN 966-569-026-4
+
+ББК 81.2УКР-93
+
+ISBN 966-569-026-4
+
+© ВТФ «Перун», 1998
+© Н. В. Бондаренко, 1998")
+
+(deftest test-isbn-extraction
+  (testing "Extraction of typical Ukrainian publisher ISBN and OCR variations"
+    (let [result (extract-valid-isbn scanned-ocr-text)]
+      (println "🔎 [Clojure Scanner] Extracted result:" result)
+      (is (= result "9665690264")))))
+
+(defn -main []
+  (println "🧪 [Clojure test runner] Executing metadata scanning assertions...")
+  (let [report (run-tests 'librarian.core-test)]
+    (if (and (zero? (:fail report)) (zero? (:error report)))
+      (do
+        (println "✅ [Clojure test runner] SUCCESS! All Librarian assertions passed green!")
+        (System/exit 0))
+      (do
+        (println "❌ [Clojure test runner] FAILURE: Assertions missed baseline parameters.")
+        (System/exit 1)))))
+
+(when (= *file* (System/getProperty "babashka.file"))
+  (-main))
