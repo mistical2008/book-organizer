@@ -13,7 +13,12 @@
                             :logs []
                             :isbn-input ""
                             :is-scanning false
-                            :save-success false}))
+                            :save-success false
+                            :show-dir-picker? false
+                            :dir-picker-target nil
+                            :dir-picker-curr-path "/"
+                            :dir-picker-parent nil
+                            :dir-picker-subdirs []}))
 
 ;; =============================================================================
 ;; HTTP Actions & Effects
@@ -22,8 +27,16 @@
   (-> (js/fetch "/api/config")
       (.then (fn [resp] (.json resp)))
       (.then (fn [data]
-               (swap! app-state assoc :config data)
-               (swap! app-state assoc :edit-config data)))))
+               (let [config data
+                     input-dirs (get config :inputDirs)
+                     dir-vec (cond
+                               (vector? input-dirs) input-dirs
+                               (js/Array.isArray input-dirs) (vec input-dirs)
+                               (string? input-dirs) (vec (map str/trim (str/split input-dirs #",")))
+                               :else ["/data/books_to_sort"])
+                     normalized-config (assoc config :inputDirs dir-vec)]
+                 (swap! app-state assoc :config normalized-config)
+                 (swap! app-state assoc :edit-config normalized-config))))))
 
 (defn fetch-state! []
   (-> (js/fetch "/api/state")
@@ -56,6 +69,34 @@
       (.then (fn [resp] (.json resp)))
       (.then (fn [data]
                (swap! app-state assoc :logs data)))))
+
+(defn load-dirs! [path]
+  (let [enc-path (js/encodeURIComponent (or path "/"))]
+    (-> (js/fetch (str "/api/list-dirs?path=" enc-path))
+        (.then (fn [resp] (.json resp)))
+        (.then (fn [data]
+                 (when (= (get data "status") "ok")
+                   (swap! app-state assoc
+                          :dir-picker-curr-path (get data "path")
+                          :dir-picker-parent (get data "parent")
+                          :dir-picker-subdirs (vec (get data "dirs")))))))))
+
+(defn open-dir-picker! [target initial-path]
+  (swap! app-state assoc
+         :show-dir-picker? true
+         :dir-picker-target target)
+  (load-dirs! (or initial-path "/")))
+
+(defn close-dir-picker! []
+  (swap! app-state assoc
+         :show-dir-picker? false
+         :dir-picker-target nil))
+
+(defn select-dir-picker-dir! [path]
+  (let [target (:dir-picker-target @app-state)]
+    (when target
+      (swap! app-state assoc-in target path)
+      (close-dir-picker!))))
 
 ;; =============================================================================
 ;; Reagent View Components
@@ -199,9 +240,9 @@
             {:type "text"
              :placeholder "e.g. /data/books_to_sort/book_ocr_sample.pdf"
              :value (:isbn-input @app-state)
-             :on-focus #(swap! app-state assoc :show-autocomplete? true)
-             :on-blur #(js/setTimeout (fn [] (swap! app-state assoc :show-autocomplete? false)) 250)
-             :on-change #(swap! app-state assoc :isbn-input (.. % -target -value))}]
+             :onFocus #(swap! app-state assoc :show-autocomplete? true)
+             :onBlur #(js/setTimeout (fn [] (swap! app-state assoc :show-autocomplete? false)) 250)
+             :onChange #(swap! app-state assoc :isbn-input (.. % -target -value))}]
            
            ;; Autocomplete Suggestions Dropdown with Parts Descriptions
            (when (and (:show-autocomplete? @app-state) 
@@ -234,120 +275,327 @@
                             (swap! app-state assoc :isbn-input ""))))}
            "Queue Book File"]]]]]]]))
 
+(def template-placeholders
+  [{:token "{Author}" :label "Author" :desc "Author name (e.g. Taras Shevchenko)"}
+   {:token "{Title}"  :label "Title"  :desc "Book title (e.g. Kobzar)"}
+   {:token "{Year}"   :label "Year"   :desc "Publication/release year (e.g. 1840)"}
+   {:token "{Genre}"  :label "Genre"  :desc "Detected genre category (e.g. Poetry)"}
+   {:token "{ISBN}"   :label "ISBN"   :desc "Unique ISBN identifier (e.g. 9789662449013)"}])
+
+(defn insert-template-text! [token]
+  (let [input (js/document.getElementById "destination-template-input")]
+    (when input
+      (let [start (.-selectionStart input)
+            end (.-selectionEnd input)
+            val (or (.-value input) "")
+            before (.substring val 0 start)
+            after (.substring val end (.-length val))
+            new-val (str before token after)
+            new-cursor-pos (+ start (count token))]
+        (swap! app-state assoc-in [:edit-config :destinationTemplate] new-val)
+        (js/setTimeout
+          #(when-let [inp (js/document.getElementById "destination-template-input")]
+             (set! (.-selectionStart inp) new-cursor-pos)
+             (set! (.-selectionEnd inp) new-cursor-pos)
+             (.focus inp))
+          1)))))
+
+(defn insert-autocomplete-token! [token]
+  (let [input (js/document.getElementById "destination-template-input")]
+    (when input
+      (let [cursor (.-selectionStart input)
+            val (or (.-value input) "")
+            before-cursor (.substring val 0 cursor)
+            last-brace (.lastIndexOf before-cursor "{")]
+        (if (>= last-brace 0)
+          (let [before (.substring val 0 last-brace)
+                after (.substring val cursor (.-length val))
+                new-val (str before token after)
+                new-cursor-pos (+ last-brace (count token))]
+            (swap! app-state assoc-in [:edit-config :destinationTemplate] new-val)
+            (swap! app-state assoc :show-template-autocomplete? false)
+            (js/setTimeout
+              #(when-let [inp (js/document.getElementById "destination-template-input")]
+                 (set! (.-selectionStart inp) new-cursor-pos)
+                 (set! (.-selectionEnd inp) new-cursor-pos)
+                 (.focus inp))
+              1))
+          (insert-template-text! token))))))
+
+(defn check-template-autocomplete! []
+  (let [input (js/document.getElementById "destination-template-input")]
+    (if input
+      (let [cursor (.-selectionStart input)
+            val (or (.-value input) "")
+            before-cursor (.substring val 0 cursor)
+            last-brace (.lastIndexOf before-cursor "{")
+            last-close-brace (.lastIndexOf before-cursor "}")]
+        (if (and (>= last-brace 0)
+                 (> last-brace last-close-brace))
+          (let [search-term (str/lower-case (.substring before-cursor (inc last-brace)))
+                curr-show (:show-template-autocomplete? @app-state)
+                curr-filter (:template-autocomplete-filter @app-state)]
+            (when (or (not curr-show) (not= curr-filter search-term))
+              (swap! app-state assoc
+                     :show-template-autocomplete? true
+                     :template-autocomplete-filter search-term)))
+          (when (:show-template-autocomplete? @app-state)
+            (swap! app-state assoc :show-template-autocomplete? false))))
+      (when (:show-template-autocomplete? @app-state)
+        (swap! app-state assoc :show-template-autocomplete? false)))))
+
+(defn update-input-dir! [idx val]
+  (let [dirs (get-in @app-state [:edit-config :inputDirs])
+        dir-vec (if (vector? dirs) dirs (if (string? dirs) [dirs] []))
+        updated (assoc dir-vec idx val)]
+    (swap! app-state assoc-in [:edit-config :inputDirs] updated)))
+
+(defn remove-input-dir! [idx]
+  (let [dirs (get-in @app-state [:edit-config :inputDirs])
+        dir-vec (if (vector? dirs) dirs (if (string? dirs) [dirs] []))]
+    (when (> (count dir-vec) 1)
+      (let [updated (vec (concat (subvec dir-vec 0 idx) (subvec dir-vec (inc idx))))]
+        (swap! app-state assoc-in [:edit-config :inputDirs] updated)))))
+
+(defn add-input-dir! []
+  (let [dirs (get-in @app-state [:edit-config :inputDirs])
+        dir-vec (if (vector? dirs) dirs (if (string? dirs) [dirs] []))
+        updated (conj dir-vec "")]
+    (swap! app-state assoc-in [:edit-config :inputDirs] updated)))
+
 (defn content-generator []
   (let [edit-config (:edit-config @app-state)
         save-status (:save-success @app-state)]
     [:div.space-y-6
      [:div.border-b.border-white-5.pb-4
-      [:h2.text-2xl.font-serif.text-white.font-semibold "⚙️ Daemon Core Settings"]
-      [:p.text-xs.text-gray-400 "Configure internal directory listeners, metadata confidence thresholds, caching, and API keys."]]
+      [:h2.text-2xl.font-serif.text-white.font-semibold "⚙️ Librarian Daemon Parameters Setup"]
+      [:p.text-xs.text-gray-400 "Dynamically adjust scanning conditions, directories, confidence thresholds, and Gemini fallback targets inside your full-stack background daemon."]]
 
      [:div.bg-dark-12.p-6.rounded-xl.border.border-white-5.max-w-4xl.space-y-6
+      ;; Status Ribbon matching previous design mockup layout
+      [:div.bg-black-30.border.border-white-5.rounded-lg.p-3.flex.flex-wrap.items-center.gap-6.justify-between.text-xs.font-mono.text-gray-500
+       [:div.flex.items-center.space-x-2
+        [:span "BACKGROUND DAEMON SCHEDULER:"]
+        [:span {:class (str "px-2 py-0.5 rounded border text-[10px] font-bold "
+                            (if (get edit-config :daemonEnabled)
+                              "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                              "bg-amber-500/10 text-amber-500 border-amber-500/20"))}
+         (if (get edit-config :daemonEnabled) "ACTIVE (AUTOMATED BATCH SYNC)" "IDLE (MANUAL TRIGGER ONLY)")]
+        (when (get edit-config :daemonEnabled)
+          [:span.text-gray-400 (str " [" (get edit-config :runInterval "hourly") "]")])]
+       [:div.h-4.w-px.bg-white-10.hidden.md:block]
+       [:div
+        [:span "PROCESSING PIPELINE: "]
+        [:span.text-gray-300.font-semibold.uppercase (str "Batch Limit (" (get edit-config :batchSize 5) " files)")]]]
+
       (when save-status
         [:div.p-3.rounded.bg-emerald-950.border.border-emerald-800.text-emerald-400.text-xs.flex.items-center.justify-between
          [:span "✓ Configuration parameters written successfully to data/config.json!"]
          [:button.text-emerald-300.font-bold {:on-click #(swap! app-state assoc :save-success false)} "Dismiss"]])
 
-      [:div.grid.grid-cols-1.md:grid-cols-2.gap-6
-       ;; Left Column (File System Settings)
-       [:div.space-y-4
-        [:div.space-y-1.5
-         [:label.block.text-xs.font-serif.text-gray-300 "Monitored Folders (Comma separated)"]
-         [:input.w-full.bg-black.border.border-white-10.p-2.rounded.text-xs.text-white.focus:border-brand-muted.focus:outline-none
-          {:type "text"
-           :value (let [dirs (get edit-config :inputDirs)]
-                    (if (vector? dirs) (str/join ", " dirs) dirs))
-           :on-change #(swap! app-state assoc-in [:edit-config :inputDirs] (.. % -target -value))}]]
+      [:div.grid.grid-cols-1.md:grid-cols-2.gap-8
+       ;; Left Column (File System & Path Templates Settings)
+       [:div.space-y-6
+        [:div.space-y-2
+         [:div.flex.items-center.justify-between
+          [:label.block.text-xs.font-mono.text-gray-400.font-bold.uppercase.tracking-wider "Daemon Input Directories (Multiple Source Paths)"]
+          [:button {:type "button"
+                    :class "text-[11px] font-mono text-brand hover:text-brand-hover transition-colors"
+                    :onClick #(add-input-dir!)}
+           "+ ADD SOURCE PATH"]]
+         [:div.space-y-2
+          (let [dirs (get edit-config :inputDirs)
+                dir-list (if (vector? dirs) dirs (if (string? dirs) [dirs] ["/data/books_to_sort"]))]
+            (for [[idx dir] (map-indexed vector dir-list)]
+              ^{:key idx}
+              [:div.flex.items-center.space-x-2
+               [:span.text-xs.font-mono.text-gray-500 (str (inc idx) ".")]
+               [:div.flex.flex-1.bg-black.border.border-white-10.rounded.overflow-hidden.focus-within:border-brand-muted
+                [:input.flex-1.bg-transparent.p-2.text-xs.text-white.focus:outline-none.font-mono
+                 {:type "text"
+                  :value dir
+                  :onChange (fn [e] (update-input-dir! idx (.. e -target -value)))}]
+                [:button.px-3.py-2.bg-white-5.border-l.border-white-15.text-gray-400.hover:text-amber-500.transition-colors
+                 {:type "button"
+                  :title "Browse folder"
+                  :onClick (fn [] (open-dir-picker! [:edit-config :inputDirs idx] dir))}
+                 "📁"]
+                (when (> (count dir-list) 1)
+                  [:button.px-3.py-2.bg-white-5.border-l.border-white-15.text-gray-400.hover:text-rose-500.transition-colors
+                   {:type "button"
+                    :title "Remove path"
+                    :onClick (fn [] (remove-input-dir! idx))}
+                   "✕"])]]))]]
 
-        [:div.space-y-1.5
-         [:label.block.text-xs.font-serif.text-gray-300 "Output Category Destination Folder"]
-         [:input.w-full.bg-black.border.border-white-10.p-2.rounded.text-xs.text-white.focus:border-brand-muted.focus:outline-none
-          {:type "text"
-           :value (get edit-config :outputDir)
-           :on-change #(swap! app-state assoc-in [:edit-config :outputDir] (.. % -target -value))}]]
+        [:div.space-y-2
+         [:div.flex.items-center.justify-between
+          [:label.block.text-xs.font-mono.text-gray-400.font-bold.uppercase.tracking-wider "Destination Path Custom Template"]
+          [:button {:type "button"
+                    :class "text-[11px] font-mono text-gray-500 hover:text-gray-300 transition-colors"
+                    :onClick #(swap! app-state assoc-in [:edit-config :destinationTemplate] "{Genre}/{Author} - {Title} ({Year})")}
+           "RESET DEFAULT"]]
+         [:div.relative
+          [:input.w-full.bg-black.border.border-white-10.p-2.rounded.text-xs.text-white.focus:border-brand-muted.focus:outline-none.font-mono
+           {:id "destination-template-input"
+            :type "text"
+            :placeholder "e.g. {Genre}/{Author} - {Title}"
+            :value (get edit-config :destinationTemplate)
+            :onFocus (fn [] (check-template-autocomplete!))
+            :onChange (fn [e]
+                         (let [new-val (.. e -target -value)]
+                           (swap! app-state assoc-in [:edit-config :destinationTemplate] new-val)
+                           (check-template-autocomplete!)))
+            :onKeyUp (fn [] (check-template-autocomplete!))
+            :onBlur (fn [] (js/setTimeout (fn [] (swap! app-state assoc :show-template-autocomplete? false)) 250))}]
+          
+          ;; Autocomplete suggestions dropdown
+          (when (and (:show-template-autocomplete? @app-state)
+                     (some? (:template-autocomplete-filter @app-state)))
+            (let [filter-str (:template-autocomplete-filter @app-state)
+                  filtered-tokens (filter (fn [tp]
+                                            (or (str/blank? filter-str)
+                                                (str/includes? (str/lower-case (:token tp)) filter-str)
+                                                (str/includes? (str/lower-case (:label tp)) filter-str)))
+                                          template-placeholders)]
+              (when (seq filtered-tokens)
+                [:div.absolute.z-50.left-0.right-0.mt-1.bg-card-bg.border.border-white-10.rounded-lg.shadow-2xl.max-h-48.overflow-y-auto.divide-y.divide-white-5
+                 (for [tp filtered-tokens]
+                   ^{:key (:token tp)}
+                   [:button.w-full.text-left.px-3.py-2.hover:bg-brand-soft.transition-colors.flex.justify-between.items-center
+                    {:type "button"
+                     :onClick (fn [] (insert-autocomplete-token! (:token tp)))}
+                    [:span.text-xs.font-mono.text-brand.font-bold (:token tp)]
+                    [:span {:class "text-[10px] text-gray-400"} (:desc tp)]])])))]
+          
 
-        [:div.space-y-1.5
-         [:label.block.text-xs.font-serif.text-gray-300 "Dynamic Directory File Template"]
-         [:input.w-full.bg-black.border.border-white-10.p-2.rounded.text-xs.text-white.focus:border-brand-muted.focus:outline-none
-          {:type "text"
-           :value (get edit-config :destinationTemplate)
-           :on-change #(swap! app-state assoc-in [:edit-config :destinationTemplate] (.. % -target -value))}]]
 
-        [:div.space-y-1.5
-         [:label.block.text-xs.font-serif.text-gray-300 "Minimum Confidence Threshold (%)"]
-         [:input.w-full.bg-black.border.border-white-10.p-2.rounded.text-xs.text-white.focus:border-brand-muted.focus:outline-none
-          {:type "number"
-           :min "0"
-           :max "100"
-           :value (str (get edit-config :confidenceThreshold))
-           :on-change #(swap! app-state assoc-in [:edit-config :confidenceThreshold] (js/parseInt (.. % -target -value) 10))}]]]
+         
+         ;; Clickable mini tag badges directly below the custom template input field
+         [:div.flex.flex-wrap.gap-1.5.pt-1
+          (for [tp template-placeholders]
+            ^{:key (:token tp)}
+            [:button {:type "button"
+                      :class "text-[10px] font-mono text-brand border border-brand-muted hover:border-brand bg-black-30 hover:bg-brand-soft/20 transition-all px-2.5 py-0.5 rounded cursor-pointer"
+                      :onClick (fn [] (insert-template-text! (:token tp)))}
+             (:token tp)])]
+         
+         ;; Restored Interactive descriptive panel for template placeholders
+         [:div.space-y-3.pt-3.border-t.border-white-5
+          [:p {:class "text-[11px] text-gray-400 leading-relaxed"}
+           "Define subdirectories dynamically. Use slashes to create nested folders automatically at destination (e.g., "
+           [:code.text-gray-300.font-mono "{Genre}/{Author} - {Title}"] ")." ]]]
 
-       ;; Right Column (AI Models and Keys)
-       [:div.space-y-4
-        [:div.space-y-1.5
-         [:label.block.text-xs.font-serif.text-gray-300 "Fallback Gemini Model Selector"]
-         [:select.w-full.bg-black.border.border-white-10.p-2.rounded.text-xs.text-white.focus:border-brand-muted.focus:outline-none
-          {:value (get edit-config :geminiModel "gemini-3.5-flash")
-           :on-change #(swap! app-state assoc-in [:edit-config :geminiModel] (.. % -target -value))}
-          [:option {:value "gemini-3.5-flash"} "gemini-3.5-flash (Fast & Accurate)"]
-          [:option {:value "gemini-1.5-pro"} "gemini-1.5-pro (Aesthetic deep parsing)"]]]
-
-        [:div.space-y-1.5
-         [:label.block.text-xs.font-serif.text-brand.font-semibold "Gemini AI API Key"]
-         [:input.w-full.bg-black.border.border-white-10.p-2.rounded.text-xs.text-white.focus:border-brand-muted.focus:outline-none.font-mono
+        [:div.space-y-2
+         [:label.block.text-xs.font-mono.text-gray-400.font-bold.uppercase.tracking-wider "Gemini API Key (API КЛЮЧ)"]
+         [:input.w-full.bg-black.border.border-white-10.p-2.rounded.text-xs.text-brand.focus:border-brand-muted.focus:outline-none.font-mono
           {:type "password"
-           :placeholder "Enter Gemini API Key (saves to data/config.json)"
+           :placeholder "••••••••••••••••••••••••••••••••••••"
            :value (get edit-config :geminiApiKey "")
-           :on-change #(swap! app-state assoc-in [:edit-config :geminiApiKey] (.. % -target -value))}]]
+           :onChange #(swap! app-state assoc-in [:edit-config :geminiApiKey] (.. % -target -value))}]]
 
-        [:div.space-y-1.5
-         [:label.block.text-xs.font-serif.text-gray-300 "Google Books API Key"]
+        [:div.space-y-2
+         [:label.block.text-xs.font-mono.text-gray-400.font-bold.uppercase.tracking-wider "Google Books API Key (Optional)"]
          [:input.w-full.bg-black.border.border-white-10.p-2.rounded.text-xs.text-white.focus:border-brand-muted.focus:outline-none.font-mono
           {:type "text"
            :placeholder "Enter Google Books API Key"
            :value (get edit-config :googleBooksApiKey "")
-           :on-change #(swap! app-state assoc-in [:edit-config :googleBooksApiKey] (.. % -target -value))}]]
+           :onChange #(swap! app-state assoc-in [:edit-config :googleBooksApiKey] (.. % -target -value))}]]]
 
-        ;; Toggles Block
-        [:div.space-y-3.pt-3
-         ;; ISBN Only toggle (Primary User Request!)
-         [:label.flex.items-start.space-x-3.cursor-pointer.p-3.rounded.bg-black-30.border.border-white-5.hover:border-brand-muted.transition-colors
-          [:input.mt-1
-           {:type "checkbox"
-            :checked (get edit-config :isbnOnlyRequests false)
-            :on-change #(swap! app-state assoc-in [:edit-config :isbnOnlyRequests] (.. % -target -checked))}]
-          [:div
-           [:span.text-xs.font-serif.text-brand.font-semibold "ISBN Only Requests"]
-           [:p.text-xs.text-gray-400 "Strictly query open books APIs for metadata. Disables fallback cataloguing via Gemini AI models."]]]
+       ;; Right Column (Destination settings & parameters)
+       [:div.space-y-6
+        [:div.space-y-2
+         [:label.block.text-xs.font-mono.text-gray-400.font-bold.uppercase.tracking-wider "Output Directory"]
+         [:div.flex.bg-black.border.border-white-10.rounded.overflow-hidden.focus-within:border-brand-muted
+          [:input.flex-1.bg-transparent.p-2.text-xs.text-white.focus:outline-none.font-mono
+           {:type "text"
+            :value (get edit-config :outputDir)
+            :onChange #(swap! app-state assoc-in [:edit-config :outputDir] (.. % -target -value))}]
+          [:button.px-3.py-2.bg-white-5.border-l.border-white-15.text-gray-400.hover:text-brand.transition-colors
+           {:type "button"
+            :title "Browse folder"
+            :onClick #(open-dir-picker! [:edit-config :outputDir] (get edit-config :outputDir))}
+           "📁"]]]
 
-         ;; Enable Caching toggle
-         [:label.flex.items-start.space-x-3.cursor-pointer.p-3.rounded.bg-black-30.border.border-white-5.hover:border-brand-muted.transition-colors
-          [:input.mt-1
-           {:type "checkbox"
-            :checked (get edit-config :enableCaching false)
-            :on-change #(swap! app-state assoc-in [:edit-config :enableCaching] (.. % -target -checked))}]
-          [:div
-           [:span.text-xs.font-serif.text-white.font-semibold "Intake Registry File Caching"]
-           [:p.text-xs.text-gray-400 "Avoid duplicates by keeping track of successfully completed files, saving bandwidth."]]]
+        [:div.space-y-2
+         [:label.block.text-xs.font-mono.text-gray-400.font-bold.uppercase.tracking-wider "Gemini Fallback Model"]
+         [:select.w-full.bg-black.border.border-white-10.p-2.5.rounded.text-xs.text-gray-300.focus:border-brand-muted.focus:outline-none.font-mono
+          {:value (get edit-config :geminiModel "gemini-3.5-flash")
+           :onChange #(swap! app-state assoc-in [:edit-config :geminiModel] (.. % -target -value))}
+          [:option {:value "gemini-3.5-flash"} "gemini-3.5-flash (Recommended)"]
+          [:option {:value "gemini-1.5-pro"} "gemini-1.5-pro (Aesthetic deep parsing)"]]]
 
-         ;; Daemon enabled toggle
-         [:label.flex.items-start.space-x-3.cursor-pointer.p-3.rounded.bg-black-30.border.border-white-5.hover:border-brand-muted.transition-colors
-          [:input.mt-1
-           {:type "checkbox"
-            :checked (get edit-config :daemonEnabled false)
-            :on-change #(swap! app-state assoc-in [:edit-config :daemonEnabled] (.. % -target -checked))}]
-          [:div
-           [:span.text-xs.font-serif.text-white.font-semibold "Daemon Automated Scheduler"]
-           [:p.text-xs.text-gray-400 "Permit background system loops to poll intake folders automatically."]]]]]]
+        [:div.space-y-2
+         [:label.block.text-xs.font-mono.text-gray-400.font-bold.uppercase.tracking-wider "Confidence Limit Threshold (%)"]
+         [:input.w-full.bg-black.border.border-white-10.p-2.rounded.text-xs.text-white.focus:border-brand-muted.focus:outline-none.font-mono
+          {:type "number"
+           :min "0"
+           :max "100"
+           :value (str (get edit-config :confidenceThreshold))
+           :on-change #(swap! app-state assoc-in [:edit-config :confidenceThreshold] (js/parseInt (.. % -target -value) 10))}]]
 
-      [:div.flex.justify-end.space-x-3.border-t.border-white-5.pt-4
-       [:button.bg-brand.text-black.px-6.py-2.rounded.text-xs.font-bold.hover:bg-brand-hover.transition-colors
+        [:div.space-y-2
+         [:label.block.text-xs.font-mono.text-gray-400.font-bold.uppercase.tracking-wider "Scanning Timer Interval"]
+         [:select.w-full.bg-black.border.border-white-10.p-2.5.rounded.text-xs.text-gray-300.focus:border-brand-muted.focus:outline-none.font-mono
+          {:value (get edit-config :runInterval "hourly")
+           :on-change #(swap! app-state assoc-in [:edit-config :runInterval] (.. % -target -value))}
+          [:option {:value "hourly"} "Hourly polling (Щогодини)"]
+          [:option {:value "daily"} "Daily check (Щодня)"]
+          [:option {:value "realtime"} "Real-time watch (У реальному часі)"]
+          [:option {:value "manual"} "Manual only (Вручну)"]]]]]
+
+      ;; Horizontal Toggles Block
+      [:div.space-y-4.pt-4.border-t.border-white-5
+       [:span.block.text-xs.font-mono.text-gray-400.font-bold.uppercase.tracking-wider "Daemon System Flags"]
+       [:div.grid.grid-cols-1.md:grid-cols-2.gap-4
+        ;; Toggle 1: Background Scheduler
+        [:label.flex.items-start.space-x-3.cursor-pointer.p-3.rounded.bg-black-30.border.border-white-5.hover:border-brand-muted.transition-all
+         [:input.mt-1.rounded.border-white-20.bg-black.text-brand.focus:ring-brand.focus:ring-offset-black
+          {:type "checkbox"
+           :checked (get edit-config :daemonEnabled false)
+           :on-change #(swap! app-state assoc-in [:edit-config :daemonEnabled] (.. % -target -checked))}]
+         [:div
+          [:span.text-xs.font-mono.text-gray-200.font-semibold.uppercase "Enable Background Daemon Sync"]
+          [:p {:class "text-[11px] text-gray-500 leading-snug mt-0.5"} "Starts automatic directory scanner interval handlers"]]]
+
+        ;; Toggle 2: Cache Skip
+        [:label.flex.items-start.space-x-3.cursor-pointer.p-3.rounded.bg-black-30.border.border-white-5.hover:border-brand-muted.transition-all
+         [:input.mt-1.rounded.border-white-20.bg-black.text-brand.focus:ring-brand.focus:ring-offset-black
+          {:type "checkbox"
+           :checked (get edit-config :enableCaching false)
+           :on-change #(swap! app-state assoc-in [:edit-config :enableCaching] (.. % -target -checked))}]
+         [:div
+          [:span.text-xs.font-mono.text-gray-200.font-semibold.uppercase "Avoid Rescanning (Cache)"]
+          [:p {:class "text-[11px] text-gray-500 leading-snug mt-0.5"} "Bypasses re-processing completed records"]]]
+
+        ;; Toggle 3: Auto-Delete
+        [:label.flex.items-start.space-x-3.cursor-pointer.p-3.rounded.bg-black-30.border.border-white-5.hover:border-brand-muted.transition-all
+         [:input.mt-1.rounded.border-white-20.bg-black.text-brand.focus:ring-brand.focus:ring-offset-black
+          {:type "checkbox"
+           :checked (get edit-config :autoCleanup false)
+           :on-change #(swap! app-state assoc-in [:edit-config :autoCleanup] (.. % -target -checked))}]
+         [:div
+          [:span.text-xs.font-mono.text-gray-200.font-semibold.uppercase "Auto-Delete Original"]
+          [:p {:class "text-[11px] text-gray-500 leading-snug mt-0.5"} "Deletes files from input folder on sorting success"]]]
+
+        ;; Toggle 4: ISBN Only
+        [:label.flex.items-start.space-x-3.cursor-pointer.p-3.rounded.bg-black-30.border.border-white-5.hover:border-brand-muted.transition-all
+         [:input.mt-1.rounded.border-white-20.bg-black.text-brand.focus:ring-brand.focus:ring-offset-black
+          {:type "checkbox"
+           :checked (get edit-config :isbnOnlyRequests false)
+           :on-change #(swap! app-state assoc-in [:edit-config :isbnOnlyRequests] (.. % -target -checked))}]
+         [:div
+          [:span.text-xs.font-mono.text-gray-200.font-semibold.uppercase "ISBN Only Requests"]
+          [:p {:class "text-[11px] text-gray-500 leading-snug mt-0.5"} "Strictly query open books APIs. Disables fallback cataloguing via Gemini AI models."]]]]]
+
+      [:div.flex.justify-start.space-x-3.border-t.border-white-5.pt-4
+       [:button.bg-brand.text-black.px-6.py-3.rounded-lg.text-xs.font-bold.hover:bg-brand-hover.transition-all.uppercase.font-mono.tracking-wider
         {:on-click (fn []
                      (let [cur-config (:edit-config @app-state)
-                           input-dirs (let [dirs (get cur-config :inputDirs)]
-                                        (if (string? dirs)
-                                          (vec (map str/trim (str/split dirs #",")))
-                                          (vec dirs)))
+                           dirs (get cur-config :inputDirs)
+                           input-dirs (cond
+                                        (vector? dirs) dirs
+                                        (string? dirs) (vec (map str/trim (str/split dirs #",")))
+                                        :else (vec dirs))
                            sanitized-config (assoc cur-config :inputDirs input-dirs)]
                        (-> (js/fetch "/api/config"
                                      #js {:method "POST"
@@ -358,7 +606,7 @@
                                     (swap! app-state assoc :save-success true)
                                     (fetch-config!)))
                            (.catch (fn [err] (js/console.error err))))))}
-        "Save Configuration"]]]]))
+        "Save & Apply Daemon Settings"]]]]))
 
 (defn content-logs []
   (let [logs (:logs @app-state)]
@@ -389,6 +637,63 @@
               {:key idx :class log-class}
               log-line])))]]]))
 
+(defn dir-picker-modal []
+  (when (:show-dir-picker? @app-state)
+    (let [curr-path (:dir-picker-curr-path @app-state)
+          parent-path (:dir-picker-parent @app-state)
+          dirs (:dir-picker-subdirs @app-state)]
+      [:div.fixed.inset-0.z-50.flex.items-center.justify-center.p-4
+       ;; Backdrop
+       [:div.fixed.inset-0.backdrop-blur-sm
+        {:class "bg-black/80"
+         :onClick close-dir-picker!}]
+       ;; Dialog Panel
+       [:div.bg-dark-12.border.border-white-10.rounded-xl.w-full.max-w-xl.p-6.relative.z-10.shadow-2xl.space-y-4
+        [:div.flex.items-center.justify-between.pb-3.border-b.border-white-5
+         [:div.flex.items-center.space-x-2
+          [:span.text-brand "📁"]
+          [:h3.text-lg.font-serif.text-white.font-semibold "Select Directory Path"]]
+         [:button.text-gray-400.hover:text-white.text-xs.font-mono
+          {:onClick close-dir-picker!}
+          "[x] CLOSE"]]
+
+        ;; Path banner
+        [:div.bg-black.border.border-white-5.p-3.rounded.flex.items-center.justify-between.font-mono.text-xs
+         [:span.text-gray-400.truncate (str "CURRENT PATH: " (or curr-path "/"))]
+         (when parent-path
+           [:button.text-brand.hover:underline.shrink-0.ml-2
+            {:onClick #(load-dirs! parent-path)}
+            "↑ Up One Level"])]
+
+        ;; Scrollable directory list
+        [:div.border.border-white-10.rounded-lg.bg-black.overflow-y-auto.divide-y.divide-white-5 {:class "max-h-64 h-64"}
+         (if (empty? dirs)
+           [:div.p-8.text-center.text-gray-500.text-xs.italic "No subdirectories found inside this folder."]
+           (for [d dirs]
+             (let [name (get d "name")
+                   path (get d "path")]
+               ^{:key path}
+               [:div.flex.items-center.justify-between.p-3.transition-colors.group
+                {:class "hover:bg-brand-soft/20"
+                 :onClick nil}
+                [:button.flex.items-center.space-x-3.flex-1.text-left
+                 {:onClick #(load-dirs! path)}
+                 [:span "📁"]
+                 [:span.text-xs.text-gray-200.font-mono.font-medium.group-hover:text-brand.transition-colors name]]
+                [:button.bg-brand.text-black.px-3.py-1.rounded.font-bold.opacity-0.group-hover:opacity-100.hover:bg-brand-hover.transition-all
+                 {:class "text-[10px]"
+                  :onClick #(select-dir-picker-dir! path)}
+                 "SELECT"]])))]
+
+        ;; Action buttons at bottom
+        [:div.flex.justify-end.space-x-3.pt-2.border-t.border-white-5
+         [:button.text-gray-400.hover:text-white.px-4.py-2.rounded.text-xs.font-mono
+          {:onClick close-dir-picker!}
+          "CANCEL"]
+         [:button.bg-brand.text-black.px-5.py-2.rounded-lg.text-xs.font-bold.hover:bg-brand-hover.transition-all
+          {:onClick #(select-dir-picker-dir! curr-path)}
+          "CHOOSE CURRENT DIRECTORY"]]]])))
+
 (defn main-layout []
   [:div.min-h-screen.bg-black.text-gray-100.font-sans.flex
    [sidebar-component]
@@ -397,7 +702,8 @@
       "sandbox" [content-sandbox]
       "generator" [content-generator]
       "logs" [content-logs]
-      [content-sandbox])]])
+      [content-sandbox])]
+   [dir-picker-modal]])
 
 ;; =============================================================================
 ;; ClojureScript Reagent Bootstrapper

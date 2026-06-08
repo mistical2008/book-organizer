@@ -124,6 +124,35 @@
       (write-log! (str "Manual book scan failed: " (.getMessage e)))
       (json-response 500 {:status "error" :message (.getMessage e)}))))
 
+(defn parse-query [query-str]
+  (when query-str
+    (into {}
+          (for [part (str/split query-str #"&")
+                :let [[k v] (str/split part #"=")]]
+            [(keyword k) (java.net.URLDecoder/decode (or v "") "UTF-8")]))))
+
+(defn handle-list-dirs [req]
+  (try
+    (let [query (parse-query (:query-string req))
+          path (or (:path query) "/")
+          dir (io/file path)]
+      (if (and (.exists dir) (.isDirectory dir))
+        (let [files (.listFiles dir)
+              parent-dir (.getParent dir)
+              dirs (->> files
+                        (filter #(.isDirectory %))
+                        (map (fn [f]
+                               {:name (.getName f)
+                                :path (.getCanonicalPath f)}))
+                        (sort-by :name))]
+          (json-response 200 {:status "ok"
+                               :path (.getCanonicalPath dir)
+                               :parent (when parent-dir (.getCanonicalPath (io/file parent-dir)))
+                               :dirs dirs}))
+        (json-response 400 {:status "error" :message "Not a directory or does not exist"})))
+    (catch Exception e
+      (json-response 500 {:status "error" :message (.getMessage e)}))))
+
 ;; =============================================================================
 ;; Ring-Compatible Request Router
 ;; =============================================================================
@@ -137,6 +166,7 @@
       (and (= method :get) (= uri "/api/state")) (handle-get-state req)
       (and (= method :post) (= uri "/api/scan")) (handle-post-scan req)
       (and (= method :get) (= uri "/api/logs")) (handle-get-logs req)
+      (and (= method :get) (= uri "/api/list-dirs")) (handle-list-dirs req)
       (= method :get) (serve-static-file uri)
       :else (json-response 404 {:status "not-found" :message "Endpoint undefined in Librarian Clojure API"}))))
 
