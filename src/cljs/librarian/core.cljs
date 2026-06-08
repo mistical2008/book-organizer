@@ -18,7 +18,9 @@
                             :dir-picker-target nil
                             :dir-picker-curr-path "/"
                             :dir-picker-parent nil
-                            :dir-picker-subdirs []}))
+                            :dir-picker-subdirs []
+                            :log-search ""
+                            :log-type "all"}))
 
 ;; =============================================================================
 ;; HTTP Actions & Effects
@@ -609,29 +611,116 @@
         "Save & Apply Daemon Settings"]]]]))
 
 (defn content-logs []
-  (let [logs (:logs @app-state)]
+  (let [logs (:logs @app-state)
+        log-search (or (:log-search @app-state) "")
+        log-type (or (:log-type @app-state) "all")
+        
+        ;; Predicates to categorize log lines
+        failure? (fn [line] (or (str/includes? line "failure") (str/includes? line "failed") (str/includes? line "⚠️")))
+        success? (fn [line] (or (str/includes? line "Success") (str/includes? line "successfully") (str/includes? line "✅")))
+        resolved? (fn [line] (or (str/includes? line "Resolved") (str/includes? line "🔍") (str/includes? line "✨")))
+        info? (fn [line] (not (or (failure? line) (success? line) (resolved? line))))
+        
+        ;; Compute counts for each category from the full logs list
+        all-count (count logs)
+        failure-count (count (filter failure? logs))
+        success-count (count (filter success? logs))
+        resolved-count (count (filter resolved? logs))
+        info-count (count (filter info? logs))
+        
+        ;; Filter by selected category type
+        type-filtered (cond
+                        (= log-type "failures") (filter failure? logs)
+                        (= log-type "success") (filter success? logs)
+                        (= log-type "resolved") (filter resolved? logs)
+                        (= log-type "info") (filter info? logs)
+                        :else logs)
+                        
+        ;; Filter by text search (case-insensitive)
+        search-term (str/lower-case (str/trim log-search))
+        final-filtered-logs (if (str/blank? search-term)
+                              type-filtered
+                              (filter (fn [line]
+                                        (str/includes? (str/lower-case line) search-term))
+                                      type-filtered))]
     [:div.space-y-6
      [:div.border-b.border-white-5.pb-4
       [:h2.text-2xl.font-serif.text-white.font-semibold "📋 Stateful Core Daemon Logs"]
       [:p.text-xs.text-gray-400 "Active streaming telemetry of file system watchers, OCR runs, API calls and catalog relocations."]]
 
      [:div.bg-dark-12.p-6.rounded-xl.border.border-white-5.space-y-4
-      [:div.flex.items-center.justify-between
+      [:div.flex.flex-col.sm:flex-row.sm:items-center.justify-between.gap-4
        [:div
         [:h3.text-md.font-serif.text-brand "Streaming Terminal Output"]
         [:p {:class "text-[11px] text-gray-400"} "Displays standard logs retrieved from data/logs.json in real time."]]
-       [:button.border.border-white-10.text-gray-300.px-4.py-2.rounded-lg.text-xs.font-medium.hover:bg-brand-soft.transition-all
+       [:button.border.border-white-10.text-gray-300.px-4.py-2.rounded-lg.text-xs.font-medium.hover:bg-brand-soft.transition-all.self-start.sm:self-auto
         {:on-click #(fetch-logs!)}
         "Refresh Logs"]]
       
+      ;; Search and Category Filters panel
+      [:div.flex.flex-col.lg:flex-row.lg:items-center.justify-between.gap-4.bg-black-30.p-4.rounded-lg.border.border-white-5
+       ;; Search Box
+       [:div.relative.flex-1.w-full.max-w-md
+        [:input {:type "text"
+                 :placeholder "Search log lines..."
+                 :value log-search
+                 :class "w-full bg-black border border-white-10 rounded-lg pl-8 pr-8 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-brand"
+                 :on-change (fn [e]
+                              (swap! app-state assoc :log-search (.. e -target -value)))}]
+        ;; Search Icon
+        [:span.absolute.left-2.5.top-1.5.text-xs.opacity-40
+         "🔍"]
+        ;; Clear button
+        (when-not (str/blank? log-search)
+          [:button {:class "absolute right-2.5 top-1.5 text-gray-400 hover:text-white text-xs cursor-pointer px-1"
+                    :on-click (fn [] (swap! app-state assoc :log-search ""))}
+           "✕"])]
+       
+       ;; Category Buttons
+       [:div.flex.flex-wrap.items-center.gap-1.5
+        [:button {:class (str "px-3 py-1.5 rounded-lg text-xs font-mono transition-all border flex items-center gap-1.5 cursor-pointer "
+                              (if (= log-type "all")
+                                "bg-brand-soft text-brand border-brand/50 font-semibold"
+                                "bg-black border-white-10 text-gray-400 hover:text-white hover:border-gray-500"))
+                  :on-click #(swap! app-state assoc :log-type "all")}
+         "All" [:span {:class "text-[10px] opacity-70"} (str "(" all-count ")")]]
+         
+        [:button {:class (str "px-3 py-1.5 rounded-lg text-xs font-mono transition-all border flex items-center gap-1.5 cursor-pointer "
+                              (if (= log-type "resolved")
+                                "bg-brand-soft text-brand border-brand/50 font-semibold"
+                                "bg-black border-white-10 text-brand/80 hover:text-brand hover:border-brand/40"))
+                  :on-click #(swap! app-state assoc :log-type "resolved")}
+         "🔍 Resolved" [:span {:class "text-[10px] opacity-70"} (str "(" resolved-count ")")]]
+
+        [:button {:class (str "px-3 py-1.5 rounded-lg text-xs font-mono transition-all border flex items-center gap-1.5 cursor-pointer "
+                              (if (= log-type "success")
+                                "bg-emerald-500/10 text-emerald-400 border-emerald-500/40 font-semibold"
+                                "bg-black border-white-10 text-emerald-400/80 hover:text-emerald-400 hover:border-emerald-500/40"))
+                  :on-click #(swap! app-state assoc :log-type "success")}
+         "✅ Success" [:span {:class "text-[10px] opacity-70"} (str "(" success-count ")")]]
+
+        [:button {:class (str "px-3 py-1.5 rounded-lg text-xs font-mono transition-all border flex items-center gap-1.5 cursor-pointer "
+                              (if (= log-type "failures")
+                                "bg-rose-500/10 text-rose-400 border-rose-500/40 font-semibold"
+                                "bg-black border-white-10 text-rose-400/80 hover:text-rose-400 hover:border-rose-500/40"))
+                  :on-click #(swap! app-state assoc :log-type "failures")}
+         "⚠️ Failures" [:span {:class "text-[10px] opacity-70"} (str "(" failure-count ")")]]
+
+        [:button {:class (str "px-3 py-1.5 rounded-lg text-xs font-mono transition-all border flex items-center gap-1.5 cursor-pointer "
+                              (if (= log-type "info")
+                                "bg-white/5 text-gray-300 border-white-10 font-semibold"
+                                "bg-black border-white-10 text-gray-500 hover:text-gray-300 hover:border-white-20"))
+                  :on-click #(swap! app-state assoc :log-type "info")}
+         "ℹ️ Info" [:span {:class "text-[10px] opacity-70"} (str "(" info-count ")")]]]]
+      
       [:div.bg-black.p-5.rounded-lg.border.border-white-10.font-mono.text-xs.text-gray-300.overflow-y-auto.space-y-2 {:class "min-h-[500px] max-h-[650px]"}
-       (if (empty? logs)
-         [:p.text-xs.text-gray-500.italic.p-4 "No logged system events found in data/logs.json. Trigger a Scan or simulated book pipeline run."]
-         (for [[idx log-line] (map-indexed vector logs)]
+       (if (empty? final-filtered-logs)
+         [:p.text-xs.text-gray-500.italic.p-4 "No log lines matched the active filters & search query."]
+         (for [[idx log-line] (map-indexed vector final-filtered-logs)]
            (let [log-class (cond
-                             (or (str/includes? log-line "failure") (str/includes? log-line "failed") (str/includes? log-line "⚠️")) "text-rose-400"
-                             (or (str/includes? log-line "Success") (str/includes? log-line "successfully") (str/includes? log-line "✅")) "text-emerald-400"
-                             (or (str/includes? log-line "Resolved") (str/includes? log-line "🔍") (str/includes? log-line "✨")) "text-brand"
+                             (failure? log-line) "text-rose-400"
+                             (success? log-line) "text-emerald-400"
+                             (resolved? log-line) "text-brand"
                              :else "text-gray-400")]
              [:p.text-xs.leading-relaxed.whitespace-pre-wrap
               {:key idx :class log-class}
