@@ -57,7 +57,11 @@
             mkdir -p $out/lib/node_modules/librarian
             cp -r * $out/lib/node_modules/librarian/
             mkdir -p $out/bin
-            ln -s $out/lib/node_modules/librarian/dist/server.cjs $out/bin/librarian-web
+            cat > $out/bin/librarian-web <<EOF
+#!/bin/sh
+exec ${pkgs.babashka}/bin/bb --classpath $out/lib/node_modules/librarian/src/clojure:$out/lib/node_modules/librarian/src/cljs -m librarian.server "\$@"
+EOF
+            chmod +x $out/bin/librarian-web
           '';
         };
 
@@ -150,7 +154,7 @@
                   Type = "simple";
                   User = "root"; # Needed to read and write any scanning source folders configured in web app
                   StateDirectory = "librarian-web";
-                  ExecStart = "${pkgs.bash}/bin/bash -c 'mkdir -p ${cfg.stateDir} && ln -sfn ${self.packages.${pkgs.system}.librarian-web}/lib/node_modules/librarian/dist ${cfg.stateDir}/dist && cd ${cfg.stateDir} && exec ${pkgs.nodejs}/bin/node dist/server.cjs'";
+                  ExecStart = "${pkgs.bash}/bin/bash -c 'mkdir -p ${cfg.stateDir} && ln -sfn ${self.packages.${pkgs.system}.librarian-web}/lib/node_modules/librarian/dist ${cfg.stateDir}/dist && cd ${cfg.stateDir} && exec ${self.packages.${pkgs.system}.librarian-web}/bin/librarian-web'";
                   Restart = "on-failure";
                   EnvironmentFiles = lib.optional (cfg.apiKeyFile != null) cfg.apiKeyFile;
                 };
