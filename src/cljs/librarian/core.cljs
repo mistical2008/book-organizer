@@ -533,13 +533,13 @@
            :min "0"
            :max "100"
            :value (str (get edit-config :confidenceThreshold))
-           :on-change #(swap! app-state assoc-in [:edit-config :confidenceThreshold] (js/parseInt (.. % -target -value) 10))}]]
+           :onChange #(swap! app-state assoc-in [:edit-config :confidenceThreshold] (js/parseInt (.. % -target -value) 10))}]]
 
         [:div.space-y-2
          [:label.block.text-xs.font-mono.text-gray-400.font-bold.uppercase.tracking-wider "Scanning Timer Interval"]
          [:select.w-full.bg-black.border.border-white-10.p-2.5.rounded.text-xs.text-gray-300.focus:border-brand-muted.focus:outline-none.font-mono
           {:value (get edit-config :runInterval "hourly")
-           :on-change #(swap! app-state assoc-in [:edit-config :runInterval] (.. % -target -value))}
+           :onChange #(swap! app-state assoc-in [:edit-config :runInterval] (.. % -target -value))}
           [:option {:value "hourly"} "Hourly polling (Щогодини)"]
           [:option {:value "daily"} "Daily check (Щодня)"]
           [:option {:value "realtime"} "Real-time watch (У реальному часі)"]
@@ -554,7 +554,7 @@
          [:input.mt-1.rounded.border-white-20.bg-black.text-brand.focus:ring-brand.focus:ring-offset-black
           {:type "checkbox"
            :checked (get edit-config :daemonEnabled false)
-           :on-change #(swap! app-state assoc-in [:edit-config :daemonEnabled] (.. % -target -checked))}]
+           :onChange #(swap! app-state assoc-in [:edit-config :daemonEnabled] (.. % -target -checked))}]
          [:div
           [:span.text-xs.font-mono.text-gray-200.font-semibold.uppercase "Enable Background Daemon Sync"]
           [:p {:class "text-[11px] text-gray-500 leading-snug mt-0.5"} "Starts automatic directory scanner interval handlers"]]]
@@ -564,7 +564,7 @@
          [:input.mt-1.rounded.border-white-20.bg-black.text-brand.focus:ring-brand.focus:ring-offset-black
           {:type "checkbox"
            :checked (get edit-config :enableCaching false)
-           :on-change #(swap! app-state assoc-in [:edit-config :enableCaching] (.. % -target -checked))}]
+           :onChange #(swap! app-state assoc-in [:edit-config :enableCaching] (.. % -target -checked))}]
          [:div
           [:span.text-xs.font-mono.text-gray-200.font-semibold.uppercase "Avoid Rescanning (Cache)"]
           [:p {:class "text-[11px] text-gray-500 leading-snug mt-0.5"} "Bypasses re-processing completed records"]]]
@@ -574,7 +574,7 @@
          [:input.mt-1.rounded.border-white-20.bg-black.text-brand.focus:ring-brand.focus:ring-offset-black
           {:type "checkbox"
            :checked (get edit-config :autoCleanup false)
-           :on-change #(swap! app-state assoc-in [:edit-config :autoCleanup] (.. % -target -checked))}]
+           :onChange #(swap! app-state assoc-in [:edit-config :autoCleanup] (.. % -target -checked))}]
          [:div
           [:span.text-xs.font-mono.text-gray-200.font-semibold.uppercase "Auto-Delete Original"]
           [:p {:class "text-[11px] text-gray-500 leading-snug mt-0.5"} "Deletes files from input folder on sorting success"]]]
@@ -584,7 +584,7 @@
          [:input.mt-1.rounded.border-white-20.bg-black.text-brand.focus:ring-brand.focus:ring-offset-black
           {:type "checkbox"
            :checked (get edit-config :isbnOnlyRequests false)
-           :on-change #(swap! app-state assoc-in [:edit-config :isbnOnlyRequests] (.. % -target -checked))}]
+           :onChange #(swap! app-state assoc-in [:edit-config :isbnOnlyRequests] (.. % -target -checked))}]
          [:div
           [:span.text-xs.font-mono.text-gray-200.font-semibold.uppercase "ISBN Only Requests"]
           [:p {:class "text-[11px] text-gray-500 leading-snug mt-0.5"} "Strictly query open books APIs. Disables fallback cataloguing via Gemini AI models."]]]]]
@@ -665,8 +665,8 @@
                  :placeholder "Search log lines..."
                  :value log-search
                  :class "w-full bg-black border border-white-10 rounded-lg pl-8 pr-8 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-brand"
-                 :on-change (fn [e]
-                              (swap! app-state assoc :log-search (.. e -target -value)))}]
+                 :onChange (fn [e]
+                             (swap! app-state assoc :log-search (.. e -target -value)))}]
         ;; Search Icon
         [:span.absolute.left-2.5.top-1.5.text-xs.opacity-40
          "🔍"]

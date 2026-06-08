@@ -68,6 +68,7 @@
   (init-filesystem!)
   (try
     (let [new-config (json/parse-string (slurp (:body req)) true)]
+      (write-log! (str "Received new config parameters count: " (count new-config) " Keys: " (keys new-config) " config: " (pr-str new-config)))
       (spit config-file (json/generate-string new-config {:pretty true}))
       (write-log! "Configuration successfully updated by Clojure Backend Server.")
       (json-response 200 {:status "ok" :config new-config}))
