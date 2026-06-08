@@ -20,7 +20,11 @@
                             :dir-picker-parent nil
                             :dir-picker-subdirs []
                             :log-search ""
-                            :log-type "all"}))
+                            :log-type "all"
+                            :logs-copied? false
+                            :active-db "scanned_books"
+                            :db-search ""
+                            :selected-record nil}))
 
 ;; =============================================================================
 ;; HTTP Actions & Effects
@@ -44,6 +48,7 @@
   (-> (js/fetch "/api/state")
       (.then (fn [resp] (.json resp)))
       (.then (fn [data]
+               (swap! app-state assoc :raw-state data)
                (let [scanned (or (get data "scanned_books") (get data :scanned_books) [])
                      orgs (or (get data "file_organization") (get data :file_organization) [])
                      ;; Create a lookup map of org-items keyed by filepath
@@ -137,6 +142,7 @@
      [:div.flex-1.space-y-1.5
       (for [[tab label-icon] [["sandbox" "⚡ Sandbox Hub"]
                                ["generator" "⚙️ Daemon Config"]
+                              ["databases" "🗄️ Database View"]
                                ["logs" "📋 Production Logs"]]]
         [:button.w-full.flex.items-center.space-x-3.px-4.py-3.rounded-lg.text-xs.font-semibold.text-left.transition-all
          {:key tab
@@ -606,9 +612,9 @@
                            (.then (fn [resp] (.json resp)))
                            (.then (fn [res]
                                     (swap! app-state assoc :save-success true)
-                                    (fetch-config!)))
-                           (.catch (fn [err] (js/console.error err))))))}
-        "Save & Apply Daemon Settings"]]]]))
+                                     (fetch-config!)))
+                            (.catch (fn [err] (js/console.error err))))))}
+         "Save & Apply Daemon Settings"]]]]))
 
 (defn content-logs []
   (let [logs (:logs @app-state)
@@ -653,9 +659,17 @@
        [:div
         [:h3.text-md.font-serif.text-brand "Streaming Terminal Output"]
         [:p {:class "text-[11px] text-gray-400"} "Displays standard logs retrieved from data/logs.json in real time."]]
-       [:button.border.border-white-10.text-gray-300.px-4.py-2.rounded-lg.text-xs.font-medium.hover:bg-brand-soft.transition-all.self-start.sm:self-auto
-        {:on-click #(fetch-logs!)}
-        "Refresh Logs"]]
+       [:div.flex.items-center.space-x-2.self-start.sm:self-auto
+        [:button.bg-brand.text-black.hover:bg-brand-hover.px-4.py-2.rounded-lg.text-xs.font-semibold.transition-all
+         {:on-click (fn []
+                      (-> (js/navigator.clipboard.writeText (clojure.string/join "\n" final-filtered-logs))
+                          (.then (fn []
+                                   (swap! app-state assoc :logs-copied? true)
+                                   (js/setTimeout #(swap! app-state assoc :logs-copied? false) 2000)))))}
+         (if (:logs-copied? @app-state) "✓ Copied Filtered Logs!" "📋 Copy Filtered Logs")]
+        [:button.border.border-white-10.text-gray-300.px-4.py-2.rounded-lg.text-xs.font-medium.hover:bg-brand-soft.transition-all
+         {:on-click #(fetch-logs!)}
+         "Refresh Logs"]]]
       
       ;; Search and Category Filters panel
       [:div.flex.flex-col.lg:flex-row.lg:items-center.justify-between.gap-4.bg-black-30.p-4.rounded-lg.border.border-white-5
@@ -726,6 +740,155 @@
               {:key idx :class log-class}
               log-line])))]]]))
 
+(defn content-databases []
+  (let [active-db (or (:active-db @app-state) "scanned_books")
+        db-search (or (:db-search @app-state) "")
+        selected-record (:selected-record @app-state)
+        raw-state (or (:raw-state @app-state) {})
+        records (or (get raw-state active-db) [])
+        search-term (str/lower-case (str/trim db-search))
+        filtered-records (if (str/blank? search-term)
+                           records
+                           (filter (fn [rec]
+                                     (let [str-val (str/lower-case (js/JSON.stringify (clj->js rec)))]
+                                       (str/includes? str-val search-term)))
+                                   records))
+        headers (get {"scanned_books" [["filepath" "File Path"]
+                                       ["filename" "Filename"]
+                                       ["isbn_detected" "Detected ISBN"]
+                                       ["status" "Status"]
+                                       ["timestamp" "Timestamp"]]
+                      "isbn_requests" [["filepath" "File Path"]
+                                       ["isbn" "ISBN Query"]
+                                       ["status" "Status"]
+                                       ["timestamp" "Timestamp"]]
+                      "ai_categorization" [["filepath" "File Path"]
+                                           ["text_preview" "Text Preview"]
+                                           ["status" "Status"]
+                                           ["timestamp" "Timestamp"]]
+                      "file_organization" [["filepath" "File Path"]
+                                           ["dest_path" "Destination Path"]
+                                           ["author" "Author"]
+                                           ["title" "Title"]
+                                           ["year" "Year"]
+                                           ["genre" "Genre"]
+                                           ["isbn" "ISBN"]
+                                           ["confidence" "Confidence"]
+                                           ["status" "Status"]
+                                           ["notes" "Notes"]
+                                           ["timestamp" "Timestamp"]]}
+                     active-db)]
+    [:div.space-y-6
+     [:div.border-b.border-white-5.pb-4
+      [:h2.text-2xl.font-serif.text-white.font-semibold "🗄️ System Database Registries"]
+      [:p.text-xs.text-gray-400 "Inspect state.json table records, cataloging logs, OCR results, and physical filesystems metadata in real-time."]]
+
+     ;; Sub-tab selection menu
+     [:div.grid.grid-cols-2.md:grid-cols-4.gap-3
+      (for [[db-key label badge-color icon]
+            [["scanned_books" "Scanned Publications" "bg-blue-500/10 text-blue-400" "📖"]
+             ["isbn_requests" "ISBN Request Logs" "bg-amber-500/10 text-amber-400" "🔍"]
+             ["ai_categorization" "AI Categorization" "bg-purple-500/10 text-purple-400" "🧠"]
+             ["file_organization" "File Relocations" "bg-emerald-500/10 text-emerald-400" "📂"]]]
+        (let [count-val (count (or (get raw-state db-key) []))]
+          [:button.p-4.rounded-xl.border.text-left.transition-all.cursor-pointer.flex.flex-col.space-y-2
+           {:key db-key
+            :class (if (= active-db db-key)
+                     "bg-brand-soft border-brand text-white shadow-lg"
+                     "bg-dark-12 border-white-5 text-gray-400 hover:text-white hover:border-white-10")
+            :on-click (fn []
+                        (swap! app-state assoc :active-db db-key)
+                        (swap! app-state assoc :selected-record nil))}
+           [:div.flex.items-center.justify-between
+            [:span.text-lg icon]
+            [:span.px-2.py-0.5.rounded.font-mono.font-bold {:class (str "text-[10px] " badge-color)} (str count-val " recs")]]
+           [:span.text-xs.font-mono.uppercase.tracking-wider.font-bold label]]))]
+
+     ;; Records Table Section
+     [:div.bg-dark-12.p-6.rounded-xl.border.border-white-5.space-y-4
+      [:div.flex.flex-col.md:flex-row.md:items-center.justify-between.gap-4
+       [:div
+        [:h3.text-md.font-serif.text-brand (str "Active Registry: " (str/replace active-db "_" " ") " (" (count filtered-records) " matches)")]
+        [:p {:class "text-[11px] text-gray-400"} "Click on any row to view full-fidelity record details & raw metadata fields."]]
+       
+       ;; Search box for table
+       [:div.relative.w-full.max-w-xs
+        [:input {:type "text"
+                 :placeholder "Filter records..."
+                 :value db-search
+                 :class "w-full bg-black border border-white-10 rounded-lg pl-8 pr-8 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-brand"
+                 :on-change (fn [e] (swap! app-state assoc :db-search (.. e -target -value)))}]
+        [:span.absolute.left-2.5.top-1.5.text-xs.opacity-40 "🔍"]
+        (when-not (str/blank? db-search)
+          [:button {:class "absolute right-2.5 top-1.5 text-gray-400 hover:text-white text-xs cursor-pointer px-1"
+                    :on-click (fn [] (swap! app-state assoc :db-search ""))} "✕"])]]
+
+      ;; Responsive Table
+      (if (empty? filtered-records)
+        [:div.p-12.text-center.border.border-white-5.rounded-lg.bg-black-30
+         [:p.text-xs.text-gray-500.italic "No database records found matching active filters in this registry."]]
+        
+        [:div.space-y-4
+         [:div.overflow-x-auto.border.border-white-5.rounded-lg.bg-black
+          [:table.w-full.text-left.border-collapse.text-xs
+           [:thead.bg-white-5.border-b.border-white-10.font-mono.uppercase.text-gray-400.tracking-wider {:class "text-[10px]"}
+            [:tr
+             (for [[field-key display-name] headers]
+               ^{:key field-key}
+               [:th.p-3.font-semibold display-name])]]
+           [:tbody.divide-y.divide-white-5
+            (for [[idx rec] (map-indexed vector filtered-records)]
+              (let [is-selected? (= selected-record rec)]
+                ^{:key idx}
+                [:tr.transition-all.cursor-pointer.group
+                 {:class (str (if is-selected? "bg-brand/10 font-medium" "hover:bg-brand-soft/10"))
+                  :on-click #(swap! app-state assoc :selected-record rec)}
+                 (for [[field-key _] headers]
+                   (let [raw-val (get rec field-key)
+                         val-str (if (nil? raw-val) "nil" (str raw-val))]
+                     ^{:key field-key}
+                     [:td.p-3.font-mono.max-w-xs.truncate.text-gray-300.group-hover:text-white.transition-colors
+                      (cond
+                        (= field-key "status")
+                        [:span.px-1.5.py-0.5.rounded.font-bold
+                         {:class (str "text-[9px] "
+                                      (if (= raw-val "completed")
+                                        "bg-emerald-500/10 text-emerald-400"
+                                        "bg-amber-500/10 text-amber-400"))}
+                         val-str]
+                        
+                        (= field-key "confidence")
+                        [:span.text-brand.font-bold (str val-str "%")]
+
+                        :else val-str)]))]))]]]
+         
+         ;; Detailed view card of the selected record
+         (when-let [rec selected-record]
+           [:div.bg-black.p-5.rounded-lg.border.space-y-4.animate-fadeIn {:class "border-brand-muted/20"}
+            [:div.flex.items-center.justify-between.border-b.border-white-5.pb-2
+             [:span.text-xs.font-mono.text-brand.font-bold.uppercase "🔍 Detailed Record Field Inspector"]
+             [:button.text-gray-500.hover:text-white.text-xs.font-mono
+              {:on-click #(swap! app-state assoc :selected-record nil)} "Close ✕"]]
+            [:div.grid.grid-cols-1.md:grid-cols-2.gap-4.text-xs
+             (for [[field-key display-name] headers]
+               (let [raw-val (get rec field-key)
+                     val-str (if (nil? raw-val) "-" (str raw-val))]
+                 ^{:key field-key}
+                 [:div.space-y-1.p-2.rounded.bg-dark-12.border.border-white-5
+                  [:span.block.text-gray-500.font-mono.uppercase.font-bold {:class "text-[10px]"} display-name]
+                  [:div.font-mono.text-white.whitespace-pre-wrap.break-words
+                   (if (and (= field-key "text_preview") (> (count val-str) 200))
+                     [:div.space-y-2
+                      [:p.leading-relaxed (str (subs val-str 0 200) "...")]
+                      [:div {:class "max-h-48 overflow-y-auto bg-black p-1.5 rounded border border-white-5 text-[11px] text-gray-400"}
+                       val-str]]
+                     val-str)]]))]
+            ;; Also show the full raw JSON
+            [:div.pt-2.space-y-1
+             [:span.block.text-gray-500.font-mono.uppercase.font-bold {:class "text-[10px]"} "Raw Record JSON Source"]
+             [:pre.bg-dark-12.p-3.rounded.border.border-white-5.text-gray-400.font-mono.overflow-x-auto {:class "text-[10px] max-h-40"}
+              (js/JSON.stringify (clj->js rec) nil 2)]]])])]]))
+
 (defn dir-picker-modal []
   (when (:show-dir-picker? @app-state)
     (let [curr-path (:dir-picker-curr-path @app-state)
@@ -790,6 +953,7 @@
     (case (:active-tab @app-state)
       "sandbox" [content-sandbox]
       "generator" [content-generator]
+      "databases" [content-databases]
       "logs" [content-logs]
       [content-sandbox])]
    [dir-picker-modal]])
