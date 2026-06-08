@@ -44,7 +44,7 @@
               base != "node_modules" && base != "dist" && base != ".git" && base != ".tessdata";
           };
 
-          npmDepsHash = "sha256-ArijNS/976hshJl+zVardXIe77Z4brL1IueFBdDa3/o="; # Placeholder, can be overridden with a fixed derivation or used locally
+          npmDepsHash = "sha256-fhzci1dTzRBHDUfumXtxBPaC++RpbR/FAdksxVoP3Z0="; # Placeholder, can be overridden with a fixed derivation or used locally
 
           # Nix builders skip dynamic network calls; local build can bypass
           dontNpmBuildPrereq = true;
