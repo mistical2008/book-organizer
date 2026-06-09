@@ -559,11 +559,17 @@
         enable-caching? (not= (:enableCaching config) false)
         resolved-inputs (map resolve-path input-dirs)
         files (filter #(and (.isFile %) (re-find #"\.(pdf|epub|djvu)$" (.getName %)))
-                      (mapcat #(.listFiles (io/file %)) resolved-inputs))
+                      (mapcat (fn [d]
+                                (let [f (io/file d)]
+                                  (if (and (.exists f) (.isDirectory f))
+                                    (.listFiles f)
+                                    [])))
+                              resolved-inputs))
         files-count (count files)
         first-three-names (map #(.getName %) (take 3 files))]
-    (write-log! (str "🔍 Library source scan started. Total files detected to sort: " files-count
-                     ". First files queue: " (str/join ", " first-three-names)))
+    (write-log! (str "🔍 Library source scan started. Resolved source path(s): " (str/join ", " resolved-inputs)
+                     ". Total files detected: " files-count
+                     ". First 3 files: " (if (empty? first-three-names) "None" (str/join ", " first-three-names))))
     (doseq [file files]
       (let [path (.getAbsolutePath file)]
         (let [cached-status (get-cached-status state path)]
@@ -571,7 +577,7 @@
             (println "⏭️ Skipping cached file: " path)
             (let [res (process-book path config)
                   new-state (update-state-with-result state path res)]
-              (save-state! new-state))))))
+               (save-state! new-state))))))
     (write-log! "✅ [Librarian] Library scanning successfully completed.")))
 
 (when (= *file* (System/getProperty "babashka.file"))

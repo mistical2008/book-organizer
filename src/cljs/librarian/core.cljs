@@ -168,7 +168,26 @@
                    "bg-brand text-black font-semibold shadow-md border-transparent"
                    "text-gray-400 hover:text-white hover:bg-brand-soft hover:border-brand-muted/10 border border-transparent")
           :on-click #(swap! app-state assoc :active-tab tab)}
-         [:span label-icon]])]
+         [:span label-icon]])
+      [:div.pt-4.border-t.border-white-5.mt-4.space-y-2
+       (let [is-scanning (:is-scanning @app-state)]
+         [:button.w-full.flex.items-center.justify-center.space-x-2.px-4.py-3.rounded-lg.text-xs.font-bold.transition-all
+          {:disabled is-scanning
+           :class (if is-scanning
+                    "bg-gray-800 text-gray-500 cursor-not-allowed border border-white-5"
+                    "bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-md cursor-pointer border border-transparent")
+           :on-click (fn []
+                       (swap! app-state assoc :is-scanning true)
+                       (-> (js/fetch "/api/scan" #js {:method "POST"})
+                           (.then (fn [resp] (.json resp)))
+                           (.then (fn [res]
+                                    (swap! app-state assoc :is-scanning false)
+                                    (fetch-state!)
+                                    (fetch-logs!)))
+                           (.catch (fn [err]
+                                     (swap! app-state assoc :is-scanning false)
+                                     (js/console.error err)))))}
+          [:span (if is-scanning "⏳ Scanning..." "🔍 Start Manual Scan") ] ] ) ] ]
      
      ;; Sidebar system stats (Footer)
      [:div.mt-auto.pt-6.border-t.border-white-5.space-y-3
