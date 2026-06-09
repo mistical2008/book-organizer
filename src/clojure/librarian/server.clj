@@ -145,11 +145,23 @@
   (let [config (json/parse-string (slurp config-file) true)
         config-user (:userName config)
         detected-user (core/get-current-os-user)
-        final-user (if (and (or (str/blank? config-user) (= config-user "root"))
-                            (not= detected-user "root"))
+        final-user (cond
+                     ;; If detected user is non-root, and the config-user is invalid/root, or is NOT currently active while detected-user IS active
+                     (and (not= detected-user "root")
+                          (or (str/blank? config-user)
+                              (= config-user "root")
+                              (and (not= config-user detected-user)
+                                   (not (core/is-user-active? config-user)))))
                      detected-user
-                     (or config-user detected-user))
+
+                     :else
+                     (or config-user detected-user "root"))
         enriched-config (assoc config :userName final-user)]
+    (when (not= config-user final-user)
+      (try
+        (spit config-file (json/generate-string enriched-config {:pretty true}))
+        (write-log! (str "🔄 Automatically updated incorrect or stale config userName from '" config-user "' to detected active user '" final-user "'"))
+        (catch Exception _ nil)))
     (json-response 200 enriched-config)))
 
 (defn handle-post-config [req]

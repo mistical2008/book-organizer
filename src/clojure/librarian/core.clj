@@ -137,12 +137,25 @@
         nil))
     (catch Exception _ nil)))
 
+(defn is-user-active? [uname]
+  (try
+    (if (or (str/blank? uname) (= uname "root"))
+      false
+      (let [actives (set (keep identity
+                               (concat [(active-loginctl-user) (active-who-user)]
+                                       (who-names)
+                                       (loginctl-names)
+                                       (active-run-user-names))))]
+        (contains? actives uname)))
+    (catch Exception _ false)))
+
 (defn get-current-os-user []
-  (let [sudo-user (System/getenv "SUDO_USER")
+  (let [proc-user (System/getProperty "user.name")
+        sudo-user (System/getenv "SUDO_USER")
         env-user (System/getenv "USER")
         logname-user (System/getenv "LOGNAME")
         ;; Determine order of preference
-        direct-claims (filter filter-user-candidate [sudo-user env-user logname-user])
+        direct-claims (filter filter-user-candidate [proc-user sudo-user env-user logname-user])
         active-loginctl (active-loginctl-user)
         active-who (active-who-user)
         who-candidates (filter filter-user-candidate (who-names))
