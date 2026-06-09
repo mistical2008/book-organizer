@@ -81,12 +81,70 @@
       nil)
     (catch Exception _ nil)))
 
+(defn active-loginctl-user []
+  (try
+    (let [seat-res (sh "loginctl" "show-seat" "seat0" "-p" "ActiveSession")
+          active-sess-id (when (= 0 (:exit seat-res))
+                           (let [m (re-find #"ActiveSession=(\S+)" (:out seat-res))]
+                             (second m)))]
+      (if (and active-sess-id (not= active-sess-id "none") (not= active-sess-id ""))
+        (let [sess-res (sh "loginctl" "show-session" active-sess-id "-p" "Name")
+              uname (when (= 0 (:exit sess-res))
+                      (let [m (re-find #"Name=(\S+)" (:out sess-res))]
+                        (second m)))]
+          (when-not (str/blank? uname) uname))
+        ;; Fallback to listing all sessions and finding the one with Active=yes or State=active
+        (let [list-res (sh "loginctl" "list-sessions" "--no-legend")]
+          (if (= 0 (:exit list-res))
+            (let [session-ids (keep (fn [line]
+                                      (let [parts (str/split (str/trim line) #"\s+")]
+                                        (when (seq parts) (first parts))))
+                                    (str/split-lines (:out list-res)))]
+              (first (keep (fn [sess-id]
+                             (let [show-res (sh "loginctl" "show-session" sess-id)
+                                   out (:out show-res)]
+                               (when (and (= 0 (:exit show-res))
+                                          (or (str/includes? out "Active=yes")
+                                              (str/includes? out "State=active")))
+                                 (let [m (re-find #"Name=(\S+)" out)]
+                                   (second m)))))
+                           session-ids)))
+            nil))))
+    (catch Exception _ nil)))
+
+(defn active-who-user []
+  (try
+    (let [res (sh "who")]
+      (if (= 0 (:exit res))
+        (let [lines (->> (str/split-lines (:out res))
+                         (map str/trim)
+                         (filter #(not (str/blank? %))))]
+          ;; Prefer lines containing graphical display signals like (:
+          (let [graphical-users (keep (fn [line]
+                                        (let [parts (str/split line #"\s+")]
+                                          (when (and (>= (count parts) 2)
+                                                     (str/includes? line "(:"))
+                                            (first parts))))
+                                      lines)]
+            (if (seq graphical-users)
+              (first graphical-users)
+              ;; Otherwise, any user mentioned in who
+              (let [all-users (keep (fn [line]
+                                      (let [parts (str/split line #"\s+")]
+                                        (when (seq parts) (first parts))))
+                                    lines)]
+                (first all-users)))))
+        nil))
+    (catch Exception _ nil)))
+
 (defn get-current-os-user []
   (let [sudo-user (System/getenv "SUDO_USER")
         env-user (System/getenv "USER")
         logname-user (System/getenv "LOGNAME")
         ;; Determine order of preference
         direct-claims (filter filter-user-candidate [sudo-user env-user logname-user])
+        active-loginctl (active-loginctl-user)
+        active-who (active-who-user)
         who-candidates (filter filter-user-candidate (who-names))
         loginctl-candidates (filter filter-user-candidate (loginctl-names))
         runtime-candidates (filter filter-user-candidate (active-run-user-names))
@@ -95,16 +153,22 @@
       ;; 1. Direct environment variable claims (non-root)
       (seq direct-claims) (first direct-claims)
       
-      ;; 2. Active logged-in users according to `who`
+      ;; 2. Active graphical or local session user from loginctl
+      (and active-loginctl (filter-user-candidate active-loginctl)) active-loginctl
+      
+      ;; 3. Active graphical or terminal user from "who"
+      (and active-who (filter-user-candidate active-who)) active-who
+      
+      ;; 4. Active logged-in users according to list in `who`
       (seq who-candidates) (first who-candidates)
       
-      ;; 3. Active sessions registered with loginctl
+      ;; 5. Active sessions registered with loginctl
       (seq loginctl-candidates) (first loginctl-candidates)
       
-      ;; 4. Active systemd user-run environments (/run/user/<uid>)
+      ;; 6. Active systemd user-run environments (/run/user/<uid>)
       (seq runtime-candidates) (first runtime-candidates)
       
-      ;; 5. Most recently active home directory under /home
+      ;; 7. Most recently active home directory under /home
       (not (str/blank? recent-home-candidate)) recent-home-candidate
       
       ;; Fallbacks
