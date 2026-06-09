@@ -59,8 +59,8 @@
             mkdir -p $out/bin
             cat > $out/bin/librarian-web <<EOF
 #!/bin/sh
-export PATH="${pkgs.tesseract}/bin:\$PATH"
-export TESSDATA_PREFIX="${tessdata-fast}/share/tessdata"
+export PATH="${pkgs.tessdata-fast}/bin:\$PATH"
+export TESSDATA_PREFIX="${pkgs.tessdata-fast}/share/tessdata"
 exec ${pkgs.babashka}/bin/bb --classpath $out/lib/node_modules/librarian/src/clojure:$out/lib/node_modules/librarian/src/cljs -m librarian.server "\$@"
 EOF
             chmod +x $out/bin/librarian-web
