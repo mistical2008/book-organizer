@@ -10,34 +10,111 @@
 (def db-path "data/state.json")
 
 ;; --- Path resolver for home directories and ~ expansion ---
+(defn parse-etc-passwd []
+  (try
+    (with-open [rdr (clojure.java.io/reader "/etc/passwd")]
+      (into {} (keep (fn [line]
+                       (let [parts (str/split line #":")]
+                         (when (>= (count parts) 3)
+                           [(nth parts 2) (first parts)])))
+                     (line-seq rdr))))
+    (catch Exception _ {})))
+
+(defn active-run-user-names []
+  (try
+    (let [run-user (io/file "/run/user")]
+      (if (and (.exists run-user) (.isDirectory run-user))
+        (let [passwd (parse-etc-passwd)
+              uids (->> (.listFiles run-user)
+                        (filter #(.isDirectory %))
+                        (map #(.getName %))
+                        (filter #(re-matches #"\d+" %)))]
+          (keep #(get passwd %) uids))
+        []))
+    (catch Exception _ [])))
+
+(defn loginctl-names []
+  (try
+    (let [res (sh "loginctl" "list-users" "--no-legend")]
+      (if (= 0 (:exit res))
+        (->> (str/split-lines (:out res))
+             (map str/trim)
+             (keep (fn [line]
+                     (let [parts (str/split line #"\s+")]
+                       (when (>= (count parts) 2)
+                         (second parts))))))
+        []))
+    (catch Exception _ [])))
+
+(defn who-names []
+  (try
+    (let [res (sh "who")]
+      (if (= 0 (:exit res))
+        (->> (str/split-lines (:out res))
+             (map str/trim)
+             (keep (fn [line]
+                     (let [parts (str/split line #"\s+")]
+                       (first parts)))))
+        []))
+    (catch Exception _ [])))
+
+(defn- filter-user-candidate [u]
+  (let [banned-names #{"lost+found" "guest" "node" "ubuntu" "debian" "admin" "root" "http" "www" "nobody" "systemd-network"}
+        home (io/file (str "/home/" u))]
+    (and (not (str/blank? u))
+         (not (contains? banned-names u))
+         (.exists home)
+         (.isDirectory home))))
+
+(defn get-most-recently-modified-home-user []
+  (try
+    (if (.exists (io/file "/home"))
+      (let [banned-names #{"lost+found" "guest" "node" "ubuntu" "debian" "admin" "root" "http" "www" "nobody" "systemd-network"}
+            homes (filter #(and (.isDirectory %) 
+                                (not (contains? banned-names (.getName %))))
+                          (.listFiles (io/file "/home")))]
+        (when (seq homes)
+          (->> homes
+               (sort-by #(.lastModified %) >)
+               (first)
+               (.getName))))
+      nil)
+    (catch Exception _ nil)))
+
 (defn get-current-os-user []
   (let [sudo-user (System/getenv "SUDO_USER")
         env-user (System/getenv "USER")
-        logname-user (System/getenv "LOGNAME")]
+        logname-user (System/getenv "LOGNAME")
+        ;; Determine order of preference
+        direct-claims (filter filter-user-candidate [sudo-user env-user logname-user])
+        who-candidates (filter filter-user-candidate (who-names))
+        loginctl-candidates (filter filter-user-candidate (loginctl-names))
+        runtime-candidates (filter filter-user-candidate (active-run-user-names))
+        recent-home-candidate (get-most-recently-modified-home-user)]
     (cond
-      (and (not (str/blank? sudo-user)) (not= sudo-user "root")) sudo-user
-      (and (not (str/blank? env-user)) (not= env-user "root")) env-user
-      (and (not (str/blank? logname-user)) (not= logname-user "root")) logname-user
+      ;; 1. Direct environment variable claims (non-root)
+      (seq direct-claims) (first direct-claims)
+      
+      ;; 2. Active logged-in users according to `who`
+      (seq who-candidates) (first who-candidates)
+      
+      ;; 3. Active sessions registered with loginctl
+      (seq loginctl-candidates) (first loginctl-candidates)
+      
+      ;; 4. Active systemd user-run environments (/run/user/<uid>)
+      (seq runtime-candidates) (first runtime-candidates)
+      
+      ;; 5. Most recently active home directory under /home
+      (not (str/blank? recent-home-candidate)) recent-home-candidate
+      
+      ;; Fallbacks
       :else (let [logname-res (try (sh "logname") (catch Exception _ nil))
                   logname-out (when (and logname-res (= 0 (:exit logname-res)))
                                 (str/trim (:out logname-res)))]
-              (if (and (not (str/blank? logname-out)) (not= logname-out "root"))
+              (if (filter-user-candidate logname-out)
                 logname-out
-                ;; Fallback to find directories in /home
-                (if (.exists (io/file "/home"))
-                  (let [banned-names #{"lost+found" "guest" "node" "ubuntu" "debian" "admin" "root" "http" "www" "nobody"}
-                        homes (filter #(and (.isDirectory %) 
-                                            (not (contains? banned-names (.getName %))))
-                                      (.listFiles (io/file "/home")))]
-                    (if (seq homes)
-                      (.getName (first homes))
-                      ;; If only banned names exist (e.g. node in dev), fall back to first directory
-                      (let [any-homes (filter #(and (.isDirectory %) (not= (.getName %) "lost+found") (not= (.getName %) "guest"))
-                                              (.listFiles (io/file "/home")))]
-                        (if (seq any-homes)
-                          (.getName (first any-homes))
-                          "root"))))
-                  "root"))))))
+                ;; Absolute last-resort default
+                "root")))))
 
 (declare load-config)
 
