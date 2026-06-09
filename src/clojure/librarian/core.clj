@@ -421,30 +421,41 @@
         sanitized-path-name (sanitize path-name)]
     (str sanitized-path-name)))
 
+(defn tesseract-available? []
+  (try
+    (zero? (:exit (sh "which" "tesseract")))
+    (catch Exception _ false)))
+
 (defn process-book [file-path config]
-  (println "📖 Processing publication: " file-path)
-  (let [ocr-text (run-ocr file-path)
+  (let [filename (.getName (io/file file-path))
+        _ (write-log! (str "📖 [Librarian] Processing publication: " filename))
+        ocr-text (run-ocr file-path)
         confidence-threshold (:confidenceThreshold config 70)
         output-dir (:outputDir config "/data/sorted_library")
         destination-template (:destinationTemplate config "{Author} - {Title} ({Year})")
         gemini-model (:geminiModel config "gemini-3.5-flash")
         auto-cleanup? (:autoCleanup config)
         isbn-only? (:isbnOnlyRequests config)
-        filename (.getName (io/file file-path))
         isbn-match (or (extract-valid-isbn ocr-text)
                        (extract-valid-isbn filename))
+        _ (when (and isbn-match (not (str/blank? isbn-match)))
+            (write-log! (str "🔍 [Librarian] Detected ISBN '" isbn-match "' for publication '" filename "'")))
         metadata (cond
                    (and isbn-match (not (str/blank? isbn-match)))
                    (query-book-metadata isbn-match)
 
                    isbn-only?
-                   nil
+                   (do
+                     (write-log! (str "ℹ️ [Librarian] Skipping non-ISBN classification for '" filename "' (ISBN-only mode active)"))
+                     nil)
 
                    :else
-                   (try (extract-via-gemini ocr-text filename gemini-model)
-                        (catch Exception e
-                          (println "⚠️ Gemini extraction failure: " (.getMessage e))
-                          nil)))]
+                   (try
+                     (write-log! (str "🤖 [Librarian] No ISBN detected. Running Gemini AI classification for: " filename))
+                     (extract-via-gemini ocr-text filename gemini-model)
+                     (catch Exception e
+                       (write-log! (str "⚠️ [Librarian] Gemini AI classification failed for '" filename "': " (.getMessage e)))
+                       nil)))]
     (if (and metadata (>= (or (:confidence metadata) 0) confidence-threshold))
       (let [dest-name (compute-destination metadata destination-template)
             ;; Split by slashes to find subdirectories defined inside the template
@@ -468,7 +479,7 @@
             category-folder (str/join "/" (concat [resolved-out-dir] sub-dirs [file-folder]))
             ext (or (re-find #"\.[a-zA-Z0-9]+$" file-path) ".pdf")
             final-dest (str category-folder "/" (sanitize file-base-name) ext)]
-        (println "✨ Metadata Resolved! confidence=" (:confidence metadata))
+        (write-log! (str "✅ [Librarian] Successfully classified '" filename "' -> '" dest-name "' (Confidence: " (:confidence metadata) "%)"))
         (println "🚚 Relocating to: " final-dest)
         (io/make-parents final-dest)
         (io/copy (io/file file-path) (io/file final-dest))
@@ -476,7 +487,8 @@
           (io/delete-file (io/file file-path) true))
         {:status "completed" :meta metadata :destination final-dest :ocr ocr-text})
       (do
-        (println "❌ Metadata extraction did not meet confidence threshold.")
+        (let [conf (or (and metadata (:confidence metadata)) 0)]
+          (write-log! (str "⚠️ [Librarian] Classification for '" filename "' fell below confidence threshold (Threshold: " confidence-threshold "% | Got: " conf "%)")))
         {:status "low_confidence" :reason "Low confidence" :ocr ocr-text}))))
 
 (defn get-cached-status [state path]
@@ -577,15 +589,26 @@
     (write-log! (str "🔍 Library source scan started. Resolved source path(s): " (str/join ", " resolved-inputs)
                      ". Total files detected: " files-count
                      ". First 3 files: " (if (empty? first-three-names) "None" (str/join ", " first-three-names))))
-    (doseq [file files]
-      (let [path (.getAbsolutePath file)]
-        (let [cached-status (get-cached-status state path)]
-          (if (and enable-caching? (and cached-status (or (= cached-status "completed") (= cached-status "failed") (= cached-status "low_confidence"))))
-            (println "⏭️ Skipping cached file: " path)
-            (let [res (process-book path config)
-                  new-state (update-state-with-result state path res)]
-               (save-state! new-state))))))
-    (write-log! "✅ [Librarian] Library scanning successfully completed.")))
+    (when-not (tesseract-available?)
+      (write-log! "⚠️ [Librarian System] 'tesseract' CLI utility is not present. Local OCR text extraction from document scans is fallback-disabled. Filenames and Gemini-based mapping will be prioritized."))
+    (let [final-state
+          (loop [remaining-files files
+                 current-state state
+                 skipped-count 0]
+            (if-let [file (first remaining-files)]
+              (let [path (.getAbsolutePath file)
+                    cached-status (get-cached-status current-state path)]
+                (if (and enable-caching? (and cached-status (or (= cached-status "completed") (= cached-status "failed") (= cached-status "low_confidence"))))
+                  (recur (rest remaining-files) current-state (inc skipped-count))
+                  (let [res (process-book path config)
+                        new-state (update-state-with-result current-state path res)]
+                     (save-state! new-state)
+                     (recur (rest remaining-files) new-state skipped-count))))
+              (do
+                (when (> skipped-count 0)
+                  (write-log! (str "⏭️ [Librarian] Skipped " skipped-count " cached files (previously completed or low-confidence classified) to save API/system resources.")))
+                current-state)))]
+      (write-log! "✅ [Librarian] Library scanning successfully completed."))))
 
 (when (= *file* (System/getProperty "babashka.file"))
   (-main))
