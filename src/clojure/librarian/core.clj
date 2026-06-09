@@ -372,24 +372,29 @@
         (query-open-library clean-isbn))))
 
 (defn run-ocr [file-path]
-  (println "📝 [Librarian] Translating layout using local tesseract CLI: " file-path)
-  (let [output-base (str file-path "-tmp-txt")
-        result (sh "tesseract" file-path output-base "-l" "eng+ukr")]
-    (if (zero? (:exit result))
-      (let [txt-file (io/file (str output-base ".txt"))
-            txt-content (slurp txt-file)]
-        (io/delete-file txt-file true)
-        txt-content)
+  (try
+    (println "📝 [Librarian] Translating layout using local tesseract CLI: " file-path)
+    (let [output-base (str file-path "-tmp-txt")
+          result (sh "tesseract" file-path output-base "-l" "eng+ukr")]
+      (if (zero? (:exit result))
+        (let [txt-file (io/file (str output-base ".txt"))
+              txt-content (slurp txt-file)]
+          (io/delete-file txt-file true)
+          txt-content)
+        ""))
+    (catch Exception e
+      (println "⚠️ OCR execution failed (tesseract probably missing):" (.getMessage e))
       "")))
 
-(defn extract-via-gemini [text gemini-model]
+(defn extract-via-gemini [text filename gemini-model]
   (let [config (load-config)
         api-key (or (:geminiApiKey config) (System/getenv "GEMINI_API_KEY"))]
     (if (str/blank? api-key)
       (throw (Exception. "GEMINI_API_KEY environment variable or settings configuration is required."))
       (let [url (str "https://generativelanguage.googleapis.com/v1beta/models/" (or gemini-model "gemini-3.5-flash") ":generateContent?key=" api-key)
             system-prompt "Act as the Librarian Library Metadata Agent. Extract: author, title, year, genre, isbn. Return JSON: {author, title, year, genre, isbn, confidence, notes}."
-            payload {:contents [{:parts [{:text (subs text 0 (min (count text) 4000))}]}]
+            combined-text (str "Book Filename: " filename "\n\nExtracted content preview (OCR/Text):\n" (subs text 0 (min (count text) 4000)))
+            payload {:contents [{:parts [{:text combined-text}]}]
                      :systemInstruction {:parts [{:text system-prompt}]}
                      :generationConfig {:responseMimeType "application/json"}}
             resp (http/post url {:headers {"Content-Type" "application/json"}
@@ -425,7 +430,9 @@
         gemini-model (:geminiModel config "gemini-3.5-flash")
         auto-cleanup? (:autoCleanup config)
         isbn-only? (:isbnOnlyRequests config)
-        isbn-match (extract-valid-isbn ocr-text)
+        filename (.getName (io/file file-path))
+        isbn-match (or (extract-valid-isbn ocr-text)
+                       (extract-valid-isbn filename))
         metadata (cond
                    (and isbn-match (not (str/blank? isbn-match)))
                    (query-book-metadata isbn-match)
@@ -434,7 +441,7 @@
                    nil
 
                    :else
-                   (try (extract-via-gemini ocr-text gemini-model)
+                   (try (extract-via-gemini ocr-text filename gemini-model)
                         (catch Exception e
                           (println "⚠️ Gemini extraction failure: " (.getMessage e))
                           nil)))]
