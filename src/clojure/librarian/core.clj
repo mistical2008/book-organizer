@@ -375,7 +375,7 @@
   (try
     (println "📝 [Librarian] Translating layout using local tesseract CLI: " file-path)
     (let [output-base (str file-path "-tmp-txt")
-          result (sh "tesseract" file-path output-base "-l" "eng+ukr")]
+          result (sh "tesseract" file-path output-base "-l" "eng+ukr+srp+srp_latn")]
       (if (zero? (:exit result))
         (let [txt-file (io/file (str output-base ".txt"))
               txt-content (slurp txt-file)]

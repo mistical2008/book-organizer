@@ -11,13 +11,10 @@
       let
         pkgs = import nixpkgs {
           inherit system;
-          overlays = [
-            (final: prev: {
-              tessdata-fast = prev.tesseract.override {
-                enableLanguages = [ "eng" "ukr" ];
-              };
-            })
-          ];
+        };
+
+        tesseract-custom = pkgs.tesseract.override {
+          enableLanguages = [ "eng" "ukr" "srp" "srp_latn" ];
         };
 
         # 1. Package the Python Librarian Daemon
@@ -59,8 +56,8 @@
             mkdir -p $out/bin
             cat > $out/bin/librarian-web <<EOF
 #!/bin/sh
-export PATH="${pkgs.tessdata-fast}/bin:\$PATH"
-export TESSDATA_PREFIX="${pkgs.tessdata-fast}/share/tessdata"
+export PATH="${tesseract-custom}/bin:\$PATH"
+export TESSDATA_PREFIX="${tesseract-custom}/share/tessdata"
 exec ${pkgs.babashka}/bin/bb --classpath $out/lib/node_modules/librarian/src/clojure:$out/lib/node_modules/librarian/src/cljs -m librarian.server "\$@"
 EOF
             chmod +x $out/bin/librarian-web
@@ -79,8 +76,7 @@ EOF
           buildInputs = [
             pkgs.nodejs
             pkgs.nodePackages.npm
-            pkgs.tesseract
-            pkgs.tessdata-fast
+            tesseract-custom
 
             (pkgs.python3.withPackages (ps: with ps; [
               pillow
@@ -96,15 +92,17 @@ EOF
           shellHook = ''
             export TESSDATA_PREFIX="$(pwd)/.tessdata"
             mkdir -p .tessdata
-            ln -sf ${pkgs.tessdata-fast}/share/tessdata/eng.traineddata .tessdata/
-            ln -sf ${pkgs.tessdata-fast}/share/tessdata/ukr.traineddata .tessdata/
+            ln -sf ${tesseract-custom}/share/tessdata/eng.traineddata .tessdata/
+            ln -sf ${tesseract-custom}/share/tessdata/ukr.traineddata .tessdata/
+            ln -sf ${tesseract-custom}/share/tessdata/srp.traineddata .tessdata/
+            ln -sf ${tesseract-custom}/share/tessdata/srp_latn.traineddata .tessdata/
 
             echo "========================================================="
             echo "  📜 LIBRARIAN DEVELOPMENT FLAKE SHELL ACTIVE"
-            echo "  System: \${system}"
+            echo "  System: ${system}"
             echo "========================================================="
             echo " Available engines: Node \${pkgs.nodejs.version}, Python 3 \${pkgs.python3.version}"
-            echo " Integrated dictionaries: English (eng), Ukrainian (ukr), etc."
+            echo " Integrated dictionaries: English (eng), Ukrainian (ukr), Serbian (srp, srp_latn), etc."
             echo " Run 'npm run dev' to boot the sandboxed portal locally!"
             echo "========================================================="
           '';
@@ -115,7 +113,7 @@ EOF
           let
             cfg = config.services.librarian;
             tessdata-fast = pkgs.tesseract.override {
-              enableLanguages = [ "eng" "ukr" ];
+              enableLanguages = [ "eng" "ukr" "srp" "srp_latn" ];
             };
           in {
             options.services.librarian = {
