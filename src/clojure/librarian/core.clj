@@ -10,12 +10,40 @@
 (def db-path "data/state.json")
 
 ;; --- Path resolver for home directories and ~ expansion ---
+(defn get-current-os-user []
+  (let [sudo-user (System/getenv "SUDO_USER")
+        env-user (System/getenv "USER")
+        logname-user (System/getenv "LOGNAME")]
+    (cond
+      (and (not (str/blank? sudo-user)) (not= sudo-user "root")) sudo-user
+      (and (not (str/blank? env-user)) (not= env-user "root")) env-user
+      (and (not (str/blank? logname-user)) (not= logname-user "root")) logname-user
+      :else (let [logname-res (try (sh "logname") (catch Exception _ nil))
+                  logname-out (when (and logname-res (= 0 (:exit logname-res)))
+                                (str/trim (:out logname-res)))]
+              (if (and (not (str/blank? logname-out)) (not= logname-out "root"))
+                logname-out
+                ;; Fallback to find directories in /home
+                (if (.exists (io/file "/home"))
+                  (let [homes (filter #(and (.isDirectory %) 
+                                            (not (contains? #{"lost+found" "guest"} (.getName %))))
+                                      (.listFiles (io/file "/home")))]
+                    (if (seq homes)
+                      (.getName (first homes))
+                      "root"))
+                  "root"))))))
+
 (defn resolve-path [dir-path]
   (if (str/blank? dir-path)
     ""
     (let [trimmed (str/trim dir-path)]
       (if (str/starts-with? trimmed "~")
-        (let [home-base (cond
+        (let [user (get-current-os-user)
+              user-home (str "/home/" user)
+              home-base (cond
+                          (and (not= user "root") (.exists (io/file user-home)) (.isDirectory (io/file user-home)))
+                          user-home
+                          
                           (and (.exists (io/file "/home/evgeniy")) (.isDirectory (io/file "/home/evgeniy")))
                           "/home/evgeniy"
                           
