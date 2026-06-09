@@ -423,7 +423,8 @@
 
 (defn tesseract-available? []
   (try
-    (zero? (:exit (sh "which" "tesseract")))
+    (or (zero? (:exit (sh "which" "tesseract")))
+        (zero? (:exit (sh "tesseract" "--version"))))
     (catch Exception _ false)))
 
 (defn process-book [file-path config]

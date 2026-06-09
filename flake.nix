@@ -26,7 +26,35 @@
             pypdf
             opencv4
           ];
-        } (builtins.readFile ./src/components/CodeGenerator.tsx); # Note to users to download their custom config or use default
+        } ''
+          import sys
+          import os
+          from PIL import Image
+          import pytesseract
+
+          def main():
+              print("📚 Librarian Daemon Helper Active")
+              print("Using Tesseract binary from PATH")
+              if len(sys.argv) < 2:
+                  print("Usage: librarian-daemon <image_path>")
+                  sys.exit(1)
+              
+              img_path = sys.argv[1]
+              if not os.path.exists(img_path):
+                  print(f"Error: File not found: {img_path}")
+                  sys.exit(1)
+              
+              try:
+                  text = pytesseract.image_to_string(Image.open(img_path))
+                  print("--- Extracted Text ---")
+                  print(text)
+              except Exception as e:
+                  print(f"OCR Error: {e}")
+                  sys.exit(1)
+
+          if __name__ == "__main__":
+              main()
+        '';
 
         # 2. Package the full React + Express web server
         librarian-web = pkgs.buildNpmPackage {
@@ -66,7 +94,7 @@ EOF
 
       in {
         packages = {
-          default = librarian-daemon;
+          default = librarian-web;
           inherit librarian-daemon librarian-web;
         };
 
@@ -145,6 +173,8 @@ EOF
             };
 
             config = lib.mkIf cfg.enable {
+              environment.systemPackages = [ tessdata-fast ];
+
               systemd.services.librarian = {
                 description = "Librarian Interactive Portal & Integrated Background Sync Daemon";
                 after = [ "network.target" ];
