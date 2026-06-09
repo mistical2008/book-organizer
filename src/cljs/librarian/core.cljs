@@ -745,14 +745,28 @@
         db-search (or (:db-search @app-state) "")
         selected-record (:selected-record @app-state)
         raw-state (or (:raw-state @app-state) {})
-        records (or (get raw-state active-db) [])
+        records (or (get raw-state active-db) #js [])
+        get-reconciled-val (fn [rec field-key]
+                             (let [raw (get rec field-key)]
+                               (if (and (= active-db "scanned_books")
+                                        (= field-key "isbn_detected")
+                                        (or (nil? raw) (= raw "null") (= raw "None")))
+                                 (let [filepath (or (get rec "filepath") (get rec :filepath))
+                                       orgs (or (get raw-state "file_organization") (get raw-state :file_organization) #js [])
+                                       matched-org (.find orgs (fn [o] (= (or (get o "filepath") (get o :filepath)) filepath)))]
+                                   (if matched-org
+                                     (let [isbn (or (get matched-org "isbn") (get matched-org :isbn))]
+                                       (if (or (nil? isbn) (= isbn "null") (= isbn "None"))
+                                         nil
+                                         isbn))
+                                     nil))
+                                 raw)))
         search-term (str/lower-case (str/trim db-search))
         filtered-records (if (str/blank? search-term)
                            records
-                           (filter (fn [rec]
-                                     (let [str-val (str/lower-case (js/JSON.stringify (clj->js rec)))]
-                                       (str/includes? str-val search-term)))
-                                   records))
+                           (.filter records (fn [rec]
+                                              (let [str-val (str/lower-case (js/JSON.stringify rec))]
+                                                (str/includes? str-val search-term)))))
         headers (get {"scanned_books" [["filepath" "File Path"]
                                        ["filename" "Filename"]
                                        ["isbn_detected" "Detected ISBN"]
@@ -790,7 +804,7 @@
              ["isbn_requests" "ISBN Request Logs" "bg-amber-500/10 text-amber-400" "🔍"]
              ["ai_categorization" "AI Categorization" "bg-purple-500/10 text-purple-400" "🧠"]
              ["file_organization" "File Relocations" "bg-emerald-500/10 text-emerald-400" "📂"]]]
-        (let [count-val (count (or (get raw-state db-key) []))]
+        (let [count-val (or (and (get raw-state db-key) (.-length (get raw-state db-key))) 0)]
           [:button.p-4.rounded-xl.border.text-left.transition-all.cursor-pointer.flex.flex-col.space-y-2
            {:key db-key
             :class (if (= active-db db-key)
@@ -808,7 +822,7 @@
      [:div.bg-dark-12.p-6.rounded-xl.border.border-white-5.space-y-4
       [:div.flex.flex-col.md:flex-row.md:items-center.justify-between.gap-4
        [:div
-        [:h3.text-md.font-serif.text-brand (str "Active Registry: " (str/replace active-db "_" " ") " (" (count filtered-records) " matches)")]
+        [:h3.text-md.font-serif.text-brand (str "Active Registry: " (str/replace active-db "_" " ") " (" (or (and filtered-records (.-length filtered-records)) 0) " matches)")]
         [:p {:class "text-[11px] text-gray-400"} "Click on any row to view full-fidelity record details & raw metadata fields."]]
        
        ;; Search box for table
@@ -824,7 +838,7 @@
                     :on-click (fn [] (swap! app-state assoc :db-search ""))} "✕"])]]
 
       ;; Responsive Table
-      (if (empty? filtered-records)
+      (if (or (nil? filtered-records) (zero? (.-length filtered-records)))
         [:div.p-12.text-center.border.border-white-5.rounded-lg.bg-black-30
          [:p.text-xs.text-gray-500.italic "No database records found matching active filters in this registry."]]
         
@@ -844,8 +858,8 @@
                  {:class (str (if is-selected? "bg-brand/10 font-medium" "hover:bg-brand-soft/10"))
                   :on-click #(swap! app-state assoc :selected-record rec)}
                  (for [[field-key _] headers]
-                   (let [raw-val (get rec field-key)
-                         val-str (if (nil? raw-val) "nil" (str raw-val))]
+                   (let [raw-val (get-reconciled-val rec field-key)
+                         val-str (if (or (nil? raw-val) (= raw-val "null") (= raw-val "None")) "nil" (str raw-val))]
                      ^{:key field-key}
                      [:td.p-3.font-mono.max-w-xs.truncate.text-gray-300.group-hover:text-white.transition-colors
                       (cond
@@ -871,17 +885,17 @@
               {:on-click #(swap! app-state assoc :selected-record nil)} "Close ✕"]]
             [:div.grid.grid-cols-1.md:grid-cols-2.gap-4.text-xs
              (for [[field-key display-name] headers]
-               (let [raw-val (get rec field-key)
-                     val-str (if (nil? raw-val) "-" (str raw-val))]
+               (let [raw-val (get-reconciled-val rec field-key)
+                     val-str (if (or (nil? raw-val) (= raw-val "null") (= raw-val "None")) "-" (str raw-val))]
                  ^{:key field-key}
                  [:div.space-y-1.p-2.rounded.bg-dark-12.border.border-white-5
                   [:span.block.text-gray-500.font-mono.uppercase.font-bold {:class "text-[10px]"} display-name]
                   [:div.font-mono.text-white.whitespace-pre-wrap.break-words
                    (if (and (= field-key "text_preview") (> (count val-str) 200))
-                     [:div.space-y-2
-                      [:p.leading-relaxed (str (subs val-str 0 200) "...")]
-                      [:div {:class "max-h-48 overflow-y-auto bg-black p-1.5 rounded border border-white-5 text-[11px] text-gray-400"}
-                       val-str]]
+                      [:div.space-y-2
+                       [:p.leading-relaxed (str (subs val-str 0 200) "...")]
+                       [:div {:class "max-h-48 overflow-y-auto bg-black p-1.5 rounded border border-white-5 text-[11px] text-gray-400"}
+                        val-str]]
                      val-str)]]))]
             ;; Also show the full raw JSON
             [:div.pt-2.space-y-1

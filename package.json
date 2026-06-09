@@ -4,6 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "predev": "node install-bb.js",
+    "prebuild": "node install-bb.js",
     "dev": "npx squint-cljs compile src/cljs/librarian/core.cljs && vite build && ./bb server",
     "build": "npx squint-cljs compile src/cljs/librarian/core.cljs && vite build",
     "start": "./bb server",

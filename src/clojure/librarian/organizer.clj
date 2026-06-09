@@ -63,11 +63,11 @@
           (println "🗑️ [Organizer] Active Clean-up enabled. Purging source raw book:" file-path)
           (io/delete-file (io/file file-path) true))
           
-        {:status "completed" :meta metadata :destination final-dest})
+        {:status "completed" :meta metadata :destination final-dest :ocr ocr-text})
         
       (do
         (println "❌ [Organizer] Validation failed or insufficient confidence threshold.")
-        {:status "low_confidence" :reason "Low confidence"}))))
+        {:status "low_confidence" :reason "Low confidence" :ocr ocr-text}))))
 
 (defn run-organizer-sync! []
   (let [config (core/load-config)
@@ -82,11 +82,11 @@
     (println "🚚 [Organizer] Initializing sorting executions on input files...")
     (doseq [file files]
       (let [path (.getAbsolutePath file)]
-        (let [cached-status (get-in state [:scanned_books path :status])]
+        (let [cached-status (core/get-cached-status state path)]
           (if (and enable-caching? (and cached-status (or (= cached-status "completed") (= cached-status "failed") (= cached-status "low_confidence"))))
             (println "⏭️ Skipping cached file match:" path)
             (let [res (organize-single-file! path config state)
-                  new-state (assoc-in state [:scanned_books path] res)]
+                  new-state (core/update-state-with-result state path res)]
               (core/save-state! new-state))))))
     (println "✅ [Organizer] Files successfully categorized, written and resolved.")))
 

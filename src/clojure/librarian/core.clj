@@ -254,10 +254,87 @@
         (io/copy (io/file file-path) (io/file final-dest))
         (when auto-cleanup?
           (io/delete-file (io/file file-path) true))
-        {:status "completed" :meta metadata :destination final-dest})
+        {:status "completed" :meta metadata :destination final-dest :ocr ocr-text})
       (do
         (println "❌ Metadata extraction did not meet confidence threshold.")
-        {:status "low_confidence" :reason "Low confidence"}))))
+        {:status "low_confidence" :reason "Low confidence" :ocr ocr-text}))))
+
+(defn get-cached-status [state path]
+  (let [scanned (or (:scanned_books state) [])]
+    (:status (first (filter #(= (:filepath %) path) scanned)))))
+
+(defn update-state-with-result [state path res]
+  (let [filename (.getName (io/file path))
+        timestamp (str (java.time.Instant/now))
+        status (:status res)
+        meta (:meta res)
+        ocr-text (or (:ocr res) "")
+        isbn (or (:isbn meta) (extract-valid-isbn ocr-text))
+        
+        ;; 1. Update scanned_books
+        scanned (or (:scanned_books state) [])
+        scanned-idx (first (keep-indexed (fn [idx item] (when (= (:filepath item) path) idx)) scanned))
+        new-scanned-item {:filepath path
+                          :filename filename
+                          :isbn_detected (if (or (nil? isbn) (= isbn "null") (= isbn "None")) nil isbn)
+                          :status status
+                          :timestamp timestamp}
+        new-scanned (if scanned-idx
+                      (assoc scanned scanned-idx new-scanned-item)
+                      (conj scanned new-scanned-item))
+                      
+        ;; 2. Update ai_categorization (if we have OCR text or meta)
+        ai-cat (or (:ai_categorization state) [])
+        ai-idx (first (keep-indexed (fn [idx item] (when (= (:filepath item) path) idx)) ai-cat))
+        new-ai-item (when-not (str/blank? ocr-text)
+                      {:filepath path
+                       :text_preview (subs ocr-text 0 (min (count ocr-text) 500))
+                       :status "completed"
+                       :timestamp timestamp})
+        new-ai-cat (if new-ai-item
+                     (if ai-idx
+                       (assoc ai-cat ai-idx new-ai-item)
+                       (conj ai-cat new-ai-item))
+                     ai-cat)
+                     
+        ;; 3. Update file_organization (if metadata is resolved successfully)
+        file-org (or (:file_organization state) [])
+        org-idx (first (keep-indexed (fn [idx item] (when (= (:filepath item) path) idx)) file-org))
+        new-org-item (when (and (= status "completed") meta)
+                       {:filepath path
+                        :dest_path (:destination res)
+                        :author (:author meta)
+                        :title (:title meta)
+                        :year (:year meta)
+                        :genre (:genre meta)
+                        :isbn (or (:isbn meta) "null")
+                        :confidence (:confidence meta)
+                        :status "completed"
+                        :notes (:notes meta)
+                        :timestamp timestamp})
+        new-file-org (if new-org-item
+                       (if org-idx
+                         (assoc file-org org-idx new-org-item)
+                         (conj file-org new-org-item))
+                       file-org)
+
+        ;; 4. Update isbn_requests (if an ISBN was detected and searched)
+        isbn-reqs (or (:isbn_requests state) [])
+        req-idx (first (keep-indexed (fn [idx item] (when (= (:filepath item) path) idx)) isbn-reqs))
+        new-req-item (when (and isbn (not (str/blank? isbn)))
+                       {:filepath path
+                        :isbn isbn
+                        :status (if (and meta (not= (:isbn meta) "No ISBN")) "completed" "failed")
+                        :timestamp timestamp})
+        new-isbn-reqs (if new-req-item
+                        (if req-idx
+                          (assoc isbn-reqs req-idx new-req-item)
+                          (conj isbn-reqs new-req-item))
+                        isbn-reqs)]
+    {:scanned_books new-scanned
+     :isbn_requests new-isbn-reqs
+     :ai_categorization new-ai-cat
+     :file_organization new-file-org}))
 
 (defn -main [& args]
   (println "================================================")
@@ -272,13 +349,12 @@
                       (mapcat #(.listFiles (io/file %)) resolved-inputs))]
     (doseq [file files]
       (let [path (.getAbsolutePath file)]
-        (let [cached-status (get-in state [:scanned_books path :status])]
+        (let [cached-status (get-cached-status state path)]
           (if (and enable-caching? (and cached-status (or (= cached-status "completed") (= cached-status "failed") (= cached-status "low_confidence"))))
             (println "⏭️ Skipping cached file: " path)
-          (let [res (process-book path config)
-                ;; Update state
-                new-state (assoc-in state [:scanned_books path] res)]
-            (save-state! new-state))))))
+            (let [res (process-book path config)
+                  new-state (update-state-with-result state path res)]
+              (save-state! new-state))))))
   (println "✅ [Librarian] Library scanning successfully completed.")))
 
 (when (= *file* (System/getProperty "babashka.file"))
