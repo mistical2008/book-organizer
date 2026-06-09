@@ -77,6 +77,24 @@
       (.then (fn [data]
                (swap! app-state assoc :logs data)))))
 
+(defn clean-logs! [mode]
+  (-> (js/fetch "/api/clean-logs"
+                #js {:method "POST"
+                     :headers #js {"Content-Type" "application/json"}
+                     :body (js/JSON.stringify (clj->js {:mode mode}))})
+      (.then (fn [resp] (.json resp)))
+      (.then (fn [data]
+               (fetch-logs!)))))
+
+(defn clean-state! [mode]
+  (-> (js/fetch "/api/clean-state"
+                #js {:method "POST"
+                     :headers #js {"Content-Type" "application/json"}
+                     :body (js/JSON.stringify (clj->js {:mode mode}))})
+      (.then (fn [resp] (.json resp)))
+      (.then (fn [data]
+               (fetch-state!)))))
+
 (defn load-dirs! [path]
   (let [enc-path (js/encodeURIComponent (or path "/"))]
     (-> (js/fetch (str "/api/list-dirs?path=" enc-path))
@@ -659,17 +677,48 @@
        [:div
         [:h3.text-md.font-serif.text-brand "Streaming Terminal Output"]
         [:p {:class "text-[11px] text-gray-400"} "Displays standard logs retrieved from data/logs.json in real time."]]
-       [:div.flex.items-center.space-x-2.self-start.sm:self-auto
-        [:button.bg-brand.text-black.hover:bg-brand-hover.px-4.py-2.rounded-lg.text-xs.font-semibold.transition-all
+       [:div.flex.flex-wrap.items-center.gap-2.self-start.sm:self-auto
+        [:button.bg-brand.text-black.hover:bg-brand-hover.px-3.py-2.rounded-lg.text-xs.font-semibold.transition-all
          {:on-click (fn []
                       (-> (js/navigator.clipboard.writeText (clojure.string/join "\n" final-filtered-logs))
                           (.then (fn []
                                    (swap! app-state assoc :logs-copied? true)
                                    (js/setTimeout #(swap! app-state assoc :logs-copied? false) 2000)))))}
          (if (:logs-copied? @app-state) "✓ Copied Filtered Logs!" "📋 Copy Filtered Logs")]
-        [:button.border.border-white-10.text-gray-300.px-4.py-2.rounded-lg.text-xs.font-medium.hover:bg-brand-soft.transition-all
+        [:button.border.border-white-10.text-gray-300.px-3.py-2.rounded-lg.text-xs.font-medium.hover:bg-brand-soft.transition-all
          {:on-click #(fetch-logs!)}
-         "Refresh Logs"]]]
+         "Refresh Logs"]
+        [:div.h-5.w-px.bg-white-10.hidden.md:block]
+        [:span {:class "text-[10px] text-gray-500 font-bold uppercase tracking-wider"} "Clear:"]
+        (let [confirm-act (:confirm-action @app-state)]
+          [:<>
+           [:button.border.px-2.5.py-2.rounded-lg.text-xs.font-medium.transition-all
+            {:class (if (= confirm-act "clean-logs-all")
+                      "border-rose-600 bg-rose-950/40 text-rose-400 hover:bg-rose-900/50"
+                      "border-rose-500/25 text-rose-400 hover:bg-rose-500/10")
+             :on-click (fn []
+                         (if (= confirm-act "clean-logs-all")
+                           (do
+                             (swap! app-state assoc :confirm-action nil)
+                             (clean-logs! "all"))
+                           (swap! app-state assoc :confirm-action "clean-logs-all")))}
+            (if (= confirm-act "clean-logs-all") "⚠️ Confirm?" "All")]
+           [:button.border.px-2.5.py-2.rounded-lg.text-xs.font-medium.transition-all
+            {:class (if (= confirm-act "clean-logs-beforeToday")
+                      "border-amber-600 bg-amber-950/40 text-amber-400 hover:bg-amber-900/50"
+                      "border-amber-500/25 text-amber-400 hover:bg-amber-500/10")
+             :on-click (fn []
+                         (if (= confirm-act "clean-logs-beforeToday")
+                           (do
+                             (swap! app-state assoc :confirm-action nil)
+                             (clean-logs! "beforeToday"))
+                           (swap! app-state assoc :confirm-action "clean-logs-beforeToday")))}
+            (if (= confirm-act "clean-logs-beforeToday") "⚠️ Confirm?" "Before Today")]
+           (when (and confirm-act (clojure.string/starts-with? confirm-act "clean-logs-"))
+             [:button.text-gray-500.hover:text-gray-300.px-1.cursor-pointer
+              {:class "text-[11px]"
+               :on-click #(swap! app-state assoc :confirm-action nil)}
+              "Cancel"])])]]
       
       ;; Search and Category Filters panel
       [:div.flex.flex-col.lg:flex-row.lg:items-center.justify-between.gap-4.bg-black-30.p-4.rounded-lg.border.border-white-5
@@ -825,7 +874,55 @@
         [:h3.text-md.font-serif.text-brand (str "Active Registry: " (str/replace active-db "_" " ") " (" (or (and filtered-records (.-length filtered-records)) 0) " matches)")]
         [:p {:class "text-[11px] text-gray-400"} "Click on any row to view full-fidelity record details & raw metadata fields."]]
        
-       ;; Search box for table
+       ;; Clean Controls & Search combo
+       [:div.flex.flex-wrap.items-center.gap-3.w-full.md:w-auto
+        ;; Clean button group
+        [:div.flex.items-center.gap-1.5
+         [:span {:class "text-[10px] text-gray-500 font-bold uppercase tracking-wider"} "Clean db:"]
+         (let [confirm-act (:confirm-action @app-state)]
+           [:<>
+            [:button.border.rounded.px-2.py-1.transition-all.cursor-pointer
+             {:class (if (= confirm-act "clean-db-all")
+                       "border-rose-600 bg-rose-950/40 text-rose-400 hover:bg-rose-900/50 text-[11px]"
+                       "border-rose-500/20 text-rose-400 hover:bg-rose-500/10 text-[11px]")
+              :on-click (fn []
+                          (if (= confirm-act "clean-db-all")
+                            (do
+                              (swap! app-state assoc :confirm-action nil)
+                              (clean-state! "all"))
+                            (swap! app-state assoc :confirm-action "clean-db-all")))}
+             (if (= confirm-act "clean-db-all") "⚠️ Confirm?" "All")]
+            [:button.border.rounded.px-2.py-1.transition-all.cursor-pointer
+             {:class (if (= confirm-act "clean-db-today")
+                       "border-amber-600 bg-amber-950/40 text-amber-400 hover:bg-amber-900/50 text-[11px]"
+                       "border-amber-500/20 text-amber-400 hover:bg-amber-500/10 text-[11px]")
+              :on-click (fn []
+                          (if (= confirm-act "clean-db-today")
+                            (do
+                              (swap! app-state assoc :confirm-action nil)
+                              (clean-state! "today"))
+                            (swap! app-state assoc :confirm-action "clean-db-today")))}
+             (if (= confirm-act "clean-db-today") "⚠️ Confirm?" "Today")]
+            [:button.border.rounded.px-2.py-1.transition-all.cursor-pointer
+             {:class (if (= confirm-act "clean-db-before")
+                       "border-blue-600 bg-blue-950/40 text-blue-400 hover:bg-blue-900/50 text-[11px]"
+                       "border-blue-500/20 text-blue-400 hover:bg-blue-500/10 text-[11px]")
+              :on-click (fn []
+                          (if (= confirm-act "clean-db-before")
+                            (do
+                              (swap! app-state assoc :confirm-action nil)
+                              (clean-state! "beforeToday"))
+                            (swap! app-state assoc :confirm-action "clean-db-before")))}
+             (if (= confirm-act "clean-db-before") "⚠️ Confirm?" "Before Today")]
+            (when (and confirm-act (clojure.string/starts-with? confirm-act "clean-db-"))
+              [:button.text-gray-500.hover:text-gray-300.px-1.cursor-pointer
+               {:class "text-[11px]"
+                :on-click #(swap! app-state assoc :confirm-action nil)}
+               "Cancel"])])]
+        
+        [:div.h-5.w-px.bg-white-10.hidden.sm:block]
+       
+        ;; Search box for table
        [:div.relative.w-full.max-w-xs
         [:input {:type "text"
                  :placeholder "Filter records..."
@@ -835,7 +932,7 @@
         [:span.absolute.left-2.5.top-1.5.text-xs.opacity-40 "🔍"]
         (when-not (str/blank? db-search)
           [:button {:class "absolute right-2.5 top-1.5 text-gray-400 hover:text-white text-xs cursor-pointer px-1"
-                    :on-click (fn [] (swap! app-state assoc :db-search ""))} "✕"])]]
+                    :on-click (fn [] (swap! app-state assoc :db-search ""))} "✕"])]]]
 
       ;; Responsive Table
       (if (or (nil? filtered-records) (zero? (.-length filtered-records)))

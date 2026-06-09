@@ -51,14 +51,94 @@
     (spit logs-file (json/generate-string truncated-logs {:pretty true}))
     (println "[Librarian Clojure Server]" msg)))
 
-;; =============================================================================
-;; Core API Routing & Controller Handlers
-;; =============================================================================
 (defn json-response [status body]
   {:status status
    :headers {"Content-Type" "application/json"
              "Access-Control-Allow-Origin" "*"}
    :body (json/generate-string body)})
+
+(defn parse-date-safety [ts-str]
+  (try
+    (let [inst (java.time.Instant/parse ts-str)
+          zdt (.atZone inst (java.time.ZoneId/of "UTC"))]
+      (.toLocalDate zdt))
+    (catch Exception _ nil)))
+
+(defn clean-state-by-mode [state mode]
+  (let [today-prefix (subs (str (java.time.Instant/now)) 0 10)
+        should-keep? (fn [item]
+                       (let [ts (or (:timestamp item) (get item "timestamp") (get item :timestamp))]
+                         (if (str/blank? ts)
+                           (not= mode "all")
+                           (let [rec-date (parse-date-safety ts)
+                                 today-date (java.time.LocalDate/now (java.time.ZoneId/of "UTC"))]
+                             (cond
+                               (= mode "all") false
+                               (= mode "today") (if rec-date
+                                                  (not (.isEqual rec-date today-date))
+                                                  (not (str/starts-with? ts today-prefix)))
+                               (= mode "beforeToday") (if rec-date
+                                                        (not (.isBefore rec-date today-date))
+                                                        (str/starts-with? ts today-prefix))
+                               :else true)))))]
+    {:scanned_books (vec (filter should-keep? (or (:scanned_books state) [])))
+     :isbn_requests (vec (filter should-keep? (or (:isbn_requests state) [])))
+     :ai_categorization (vec (filter should-keep? (or (:ai_categorization state) [])))
+     :file_organization (vec (filter should-keep? (or (:file_organization state) [])))}))
+
+(defn clean-logs-by-mode [logs mode]
+  (let [today-prefix (subs (str (java.time.Instant/now)) 0 10)
+        should-keep? (fn [entry]
+                       (if (= mode "all")
+                         false
+                         (if-let [match (re-find #"^\[([^\]]+)\]" entry)]
+                           (let [ts (second match)
+                                 rec-date (parse-date-safety ts)
+                                 today-date (java.time.LocalDate/now (java.time.ZoneId/of "UTC"))]
+                             (if (= mode "beforeToday")
+                               (if rec-date
+                                 (not (.isBefore rec-date today-date))
+                                 (str/starts-with? ts today-prefix))
+                               true))
+                           (not= mode "all"))))]
+    (vec (filter should-keep? logs))))
+
+(defn handle-post-clean-state [req]
+  (init-filesystem!)
+  (try
+    (let [body (json/parse-string (slurp (:body req)) true)
+          mode (or (:mode body) "all")
+          state (json/parse-string (slurp state-file) true)
+          cleaned-state (clean-state-by-mode state mode)]
+      (write-log! (str "🧹 Initiating database clean request, payload: " (pr-str body)))
+      (spit state-file (json/generate-string cleaned-state {:pretty true}))
+      (write-log! (str "✅ Database records clean completed. Mode: " mode))
+      (json-response 200 {:status "ok" :state cleaned-state}))
+    (catch Exception e
+      (write-log! (str "❌ Failed to clean database records: " (.getMessage e)))
+      (json-response 500 {:status "error" :message (.getMessage e)}))))
+
+(defn handle-post-clean-logs [req]
+  (try
+    (let [body (json/parse-string (slurp (:body req)) true)
+          mode (or (:mode body) "all")
+          current-logs (if (.exists logs-file)
+                         (json/parse-string (slurp logs-file) true)
+                         [])
+          cleaned-logs (clean-logs-by-mode current-logs mode)]
+      ;; Log the request start (using println directly to write-log! or similar)
+      (println "[Librarian]" (str "🧹 Initiating logs clean request, payload: " (pr-str body)))
+      (spit logs-file (json/generate-string cleaned-logs {:pretty true}))
+      ;; Write the completion log in the newly cleaned/fresh log file
+      (write-log! (str "✅ Logs clean completed. Mode: " mode))
+      (json-response 200 {:status "ok" :logs cleaned-logs}))
+    (catch Exception e
+      (println "[Librarian]" (str "❌ Failed to clean logs: " (.getMessage e)))
+      (json-response 500 {:status "error" :message (.getMessage e)}))))
+
+;; =============================================================================
+;; Core API Routing & Controller Handlers
+;; =============================================================================
 
 (defn handle-get-config [req]
   (init-filesystem!)
@@ -166,6 +246,8 @@
       (and (= method :post) (= uri "/api/config")) (handle-post-config req)
       (and (= method :get) (= uri "/api/state")) (handle-get-state req)
       (and (= method :post) (= uri "/api/scan")) (handle-post-scan req)
+      (and (= method :post) (= uri "/api/clean-state")) (handle-post-clean-state req)
+      (and (= method :post) (= uri "/api/clean-logs")) (handle-post-clean-logs req)
       (and (= method :get) (= uri "/api/logs")) (handle-get-logs req)
       (and (= method :get) (= uri "/api/list-dirs")) (handle-list-dirs req)
       (= method :get) (serve-static-file uri)

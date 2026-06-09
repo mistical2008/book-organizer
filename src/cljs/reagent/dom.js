@@ -74,6 +74,10 @@ export function hiccupToReact(hiccup) {
       return el;
     });
 
+    if (tag === '<>' || tag === 'react/fragment' || tag === '') {
+      return React.createElement(React.Fragment, reactProps.key ? { key: reactProps.key } : null, ...renderedChildren);
+    }
+
     return React.createElement(tag, reactProps, ...renderedChildren);
   }
 
