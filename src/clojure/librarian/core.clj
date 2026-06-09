@@ -25,20 +25,33 @@
                 logname-out
                 ;; Fallback to find directories in /home
                 (if (.exists (io/file "/home"))
-                  (let [homes (filter #(and (.isDirectory %) 
-                                            (not (contains? #{"lost+found" "guest"} (.getName %))))
+                  (let [banned-names #{"lost+found" "guest" "node" "ubuntu" "debian" "admin" "root" "http" "www" "nobody"}
+                        homes (filter #(and (.isDirectory %) 
+                                            (not (contains? banned-names (.getName %))))
                                       (.listFiles (io/file "/home")))]
                     (if (seq homes)
                       (.getName (first homes))
-                      "root"))
+                      ;; If only banned names exist (e.g. node in dev), fall back to first directory
+                      (let [any-homes (filter #(and (.isDirectory %) (not= (.getName %) "lost+found") (not= (.getName %) "guest"))
+                                              (.listFiles (io/file "/home")))]
+                        (if (seq any-homes)
+                          (.getName (first any-homes))
+                          "root"))))
                   "root"))))))
+
+(declare load-config)
 
 (defn resolve-path [dir-path]
   (if (str/blank? dir-path)
     ""
     (let [trimmed (str/trim dir-path)]
       (if (str/starts-with? trimmed "~")
-        (let [user (get-current-os-user)
+        (let [config (load-config)
+              config-user (:userName config)
+              detected-user (get-current-os-user)
+              user (if (and (not (str/blank? config-user)) (not= config-user "root"))
+                     config-user
+                     detected-user)
               user-home (str "/home/" user)
               home-base (cond
                           (and (not= user "root") (.exists (io/file user-home)) (.isDirectory (io/file user-home)))
@@ -46,6 +59,9 @@
                           
                           (and (.exists (io/file "/home/evgeniy")) (.isDirectory (io/file "/home/evgeniy")))
                           "/home/evgeniy"
+                          
+                          (and (.exists (io/file "/home/evg")) (.isDirectory (io/file "/home/evg")))
+                          "/home/evg"
                           
                           (.exists (io/file "/home"))
                           (let [homes (filter #(and (.isDirectory %) (not= (.getName %) "lost+found") (not= (.getName %) "guest"))

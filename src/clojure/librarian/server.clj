@@ -19,7 +19,7 @@
   (when-not (.exists config-file)
     (spit config-file (json/generate-string
                         {:serviceName "librarian"
-                         :userName "root"
+                         :userName (core/get-current-os-user)
                          :inputDirs ["/data/books_to_sort"]
                          :outputDir "/data/sorted_library"
                          :destinationTemplate "{Author} - {Title} ({Year})"
@@ -142,7 +142,15 @@
 
 (defn handle-get-config [req]
   (init-filesystem!)
-  (json-response 200 (json/parse-string (slurp config-file) true)))
+  (let [config (json/parse-string (slurp config-file) true)
+        config-user (:userName config)
+        detected-user (core/get-current-os-user)
+        final-user (if (and (or (str/blank? config-user) (= config-user "root"))
+                            (not= detected-user "root"))
+                     detected-user
+                     (or config-user detected-user))
+        enriched-config (assoc config :userName final-user)]
+    (json-response 200 enriched-config)))
 
 (defn handle-post-config [req]
   (init-filesystem!)
