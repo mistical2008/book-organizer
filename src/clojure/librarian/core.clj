@@ -47,6 +47,15 @@
 (defn save-state! [state]
   (spit db-path (json/generate-string state {:pretty true})))
 
+(defn write-log! [msg]
+  (let [logs-file (io/file "data/logs.json")
+        entry (str "[" (java.time.Instant/now) "] " msg)
+        current-logs (try (json/parse-string (slurp logs-file) true)
+                          (catch Exception _ []))
+        truncated-logs (take 200 (conj current-logs entry))]
+    (spit logs-file (json/generate-string truncated-logs {:pretty true}))
+    (println "[Librarian]" msg)))
+
 (defn isbn-10? [isbn]
   (let [clean (str/upper-case (str/replace isbn #"[^0-9X]" ""))]
     (if (= (count clean) 10)
@@ -93,13 +102,13 @@
           (first (filter valid-isbn? fallback-candidates)))))))
 
 (defn query-google-books [isbn]
-  (println (str "🔍 [Librarian] Seeking ISBN match via Google Books: " isbn))
   (let [clean-isbn (str/replace isbn #"\D" "")
         config (load-config)
         api-key (or (:googleBooksApiKey config) "AIzaSyDYh87ATtVXKn9rF55Plh-1mGJhWFmigU0")
         url (if (str/blank? api-key)
               (str "https://www.googleapis.com/books/v1/volumes?q=isbn:" clean-isbn)
               (str "https://www.googleapis.com/books/v1/volumes?q=isbn:" clean-isbn "&key=" api-key))]
+    (write-log! (str "📡 [Google Books API] Request started with payload/ISBN: " clean-isbn " (URL: " (if (str/blank? api-key) url (str/replace url api-key "MASKED")) ")"))
     (try
       (let [resp (http/get url {:headers {"User-Agent" "Librarian-Babashka/1.0"}})
             body (json/parse-string (:body resp) true)]
@@ -110,6 +119,7 @@
                 title (:title volume-info)
                 pub-date (:publishedDate volume-info)
                 year (and pub-date (re-find #"\d{4}" pub-date))]
+            (write-log! (str "✅ [Google Books API] Request completed for ISBN: " clean-isbn " - Title: " title " - Author: " author))
             {:author (or author "Unknown Author")
              :title (or title "Unknown Title")
              :year (if year (Integer/parseInt year) nil)
@@ -117,15 +127,17 @@
              :isbn clean-isbn
              :confidence 100
              :notes "Matched from Google Books API using Clojure Babashka Client."})
-          nil))
+          (do
+            (write-log! (str "⚠️ [Google Books API] Request finished empty for ISBN: " clean-isbn))
+            nil)))
       (catch Exception e
-        (println "⚠️ Google Books lookup failure: " (.getMessage e))
+        (write-log! (str "❌ [Google Books API] Request failed for ISBN: " clean-isbn " - Error: " (.getMessage e)))
         nil))))
 
 (defn query-open-library [isbn]
-  (println (str "🔍 [Librarian] Seeking ISBN match via Open Library: " isbn))
   (let [clean-isbn (str/replace isbn #"\D" "")
         url (str "https://openlibrary.org/api/books?bibkeys=ISBN:" clean-isbn "&format=json&jscmd=data")]
+    (write-log! (str "📡 [Open Library API] Request started with payload/ISBN: " clean-isbn " (URL: " url ")"))
     (try
       (let [resp (http/get url {:headers {"User-Agent" "Librarian-Babashka/1.0"}})
             body (json/parse-string (:body resp))
@@ -141,6 +153,7 @@
                 genre (if (seq subjects)
                         (or (get (first subjects) "name") "General Study")
                         "General Study")]
+            (write-log! (str "✅ [Open Library API] Request completed for ISBN: " clean-isbn " - Title: " title " - Author: " author))
             {:author (or (and (not (str/blank? author)) author) "Unknown Author")
              :title (or title "Unknown Title")
              :year (if year (Integer/parseInt year) nil)
@@ -148,9 +161,11 @@
              :isbn clean-isbn
              :confidence 100
              :notes "Matched from Open Library Books API using Clojure Babashka Client."})
-          nil))
+          (do
+            (write-log! (str "⚠️ [Open Library API] Request finished empty for ISBN: " clean-isbn))
+            nil)))
       (catch Exception e
-        (println "⚠️ Open Library lookup failure: " (.getMessage e))
+        (write-log! (str "❌ [Open Library API] Request failed for ISBN: " clean-isbn " - Error: " (.getMessage e)))
         nil))))
 
 (defn query-book-metadata [isbn]
@@ -346,7 +361,11 @@
         enable-caching? (not= (:enableCaching config) false)
         resolved-inputs (map resolve-path input-dirs)
         files (filter #(and (.isFile %) (re-find #"\.(pdf|epub|djvu)$" (.getName %)))
-                      (mapcat #(.listFiles (io/file %)) resolved-inputs))]
+                      (mapcat #(.listFiles (io/file %)) resolved-inputs))
+        files-count (count files)
+        first-three-names (map #(.getName %) (take 3 files))]
+    (write-log! (str "🔍 Library source scan started. Total files detected to sort: " files-count
+                     ". First files queue: " (str/join ", " first-three-names)))
     (doseq [file files]
       (let [path (.getAbsolutePath file)]
         (let [cached-status (get-cached-status state path)]
@@ -355,7 +374,7 @@
             (let [res (process-book path config)
                   new-state (update-state-with-result state path res)]
               (save-state! new-state))))))
-  (println "✅ [Librarian] Library scanning successfully completed.")))
+    (write-log! "✅ [Librarian] Library scanning successfully completed.")))
 
 (when (= *file* (System/getProperty "babashka.file"))
   (-main))

@@ -10,6 +10,15 @@
 ;; =============================================================================
 ;; High-privilege domain which manages real file manipulations & states
 
+(defn write-log! [msg]
+  (let [logs-file (io/file "data/logs.json")
+        entry (str "[" (java.time.Instant/now) "] " msg)
+        current-logs (try (json/parse-string (slurp logs-file) true)
+                          (catch Exception _ []))
+        truncated-logs (take 200 (conj current-logs entry))]
+    (spit logs-file (json/generate-string truncated-logs {:pretty true}))
+    (println "[Organizer]" msg)))
+
 (defn organize-single-file! [file-path config state]
   (let [ocr-text (core/run-ocr file-path)
         confidence-threshold (:confidenceThreshold config 70)
@@ -75,11 +84,12 @@
         input-dirs (or (:inputDirs config) ["/data/books_to_sort"])
         enable-caching? (not= (:enableCaching config) false)
         resolved-inputs (map core/resolve-path input-dirs)
-        
         files (filter #(and (.isFile %) (re-find #"\.(pdf|epub|djvu)$" (.getName %)))
-                      (mapcat #(.listFiles (io/file %)) resolved-inputs))]
-                      
-    (println "🚚 [Organizer] Initializing sorting executions on input files...")
+                      (mapcat #(.listFiles (io/file %)) resolved-inputs))
+        files-count (count files)
+        first-three-names (map #(.getName %) (take 3 files))]
+    (write-log! (str "🚚 [Organizer] Initializing sorting executions on input files. Total files detected to sort: " files-count
+                     ". First files queue: " (str/join ", " first-three-names)))
     (doseq [file files]
       (let [path (.getAbsolutePath file)]
         (let [cached-status (core/get-cached-status state path)]
@@ -88,7 +98,7 @@
             (let [res (organize-single-file! path config state)
                   new-state (core/update-state-with-result state path res)]
               (core/save-state! new-state))))))
-    (println "✅ [Organizer] Files successfully categorized, written and resolved.")))
+    (write-log! "✅ [Organizer] Files successfully categorized, written and resolved.")))
 
 (defn -main [& args]
   (println "================================================")
