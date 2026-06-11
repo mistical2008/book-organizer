@@ -467,15 +467,18 @@
                 txt-content (if (.exists txt-file) (slurp txt-file) "")]
             (when (.exists txt-file) (io/delete-file txt-file true))
             txt-content)
-          "")))
+          (do
+            (write-log! (str "⚠️ [Tesseract OCR] Execution failed on page image: " img-path " - Exit: " (:exit result) " - Err: " (:err result)))
+            ""))))
     (catch Exception e
-      (println "⚠️ OCR image failed:" (.getMessage e))
+      (write-log! (str "⚠️ [Tesseract OCR] Process crashed on page image: " img-path " - Error: " (.getMessage e)))
       "")))
 
 (defn ocr-pdf-pages [file-path]
   (try
     (let [pdftoppm (or (find-valid-pdftoppm) "pdftoppm")
           temp-prefix (str file-path "-page")
+          _ (write-log! (str "📝 [Librarian] Rendering PDF pages to temporary images with: " pdftoppm))
           ;; Run pdftoppm to convert pages 1-10 to png
           res (sh pdftoppm "-png" "-f" "1" "-l" "10" file-path temp-prefix)]
       (if (zero? (:exit res))
@@ -485,10 +488,17 @@
                                     (io/delete-file f true)
                                     txt))
                                 files))]
-          (str/join "\n" texts))
-        ""))
+          (let [all-text (str/join "\n" texts)]
+            (if (str/blank? (str/trim all-text))
+              (do
+                (write-log! (str "⚠️ [Librarian OCR] PDf rendered but Tesseract returned zero text on " (count files) " pages."))
+                "")
+              all-text)))
+        (do
+          (write-log! (str "⚠️ [Librarian OCR] pdftoppm execution failed with exit code: " (:exit res) " Error: " (:err res)))
+          "")))
     (catch Exception e
-      (println "⚠️ OCR pdf pages extraction failed:" (.getMessage e))
+      (write-log! (str "⚠️ [Librarian OCR] PDF page rendering crashed: " (.getMessage e)))
       "")))
 
 (defn extract-djvu-text [file-path]
@@ -511,6 +521,7 @@
   (try
     (let [ddjvu (or (find-valid-ddjvu) "ddjvu")
           temp-prefix (str file-path "-page")
+          _ (write-log! (str "📝 [Librarian] Rendering DjVu pages to temporary images with: " ddjvu))
           res (sh ddjvu "-format=png" "-page=1-10" file-path (str temp-prefix "-%d.png"))]
       (if (zero? (:exit res))
         (let [files (find-generated-page-files temp-prefix)
@@ -519,10 +530,17 @@
                                     (io/delete-file f true)
                                     txt))
                                 files))]
-          (str/join "\n" texts))
-        ""))
+          (let [all-text (str/join "\n" texts)]
+            (if (str/blank? (str/trim all-text))
+              (do
+                (write-log! (str "⚠️ [Librarian OCR] DjVu rendered but Tesseract returned zero text on " (count files) " pages."))
+                "")
+              all-text)))
+        (do
+          (write-log! (str "⚠️ [Librarian OCR] ddjvu execution failed with exit code: " (:exit res) " Error: " (:err res)))
+          "")))
     (catch Exception e
-      (println "⚠️ OCR DJVU pages failed:" (.getMessage e))
+      (write-log! (str "⚠️ [Librarian OCR] DjVu page rendering crashed: " (.getMessage e)))
       "")))
 
 (defn query-book-metadata [isbn]
@@ -658,34 +676,67 @@
       (println "⚠️ PDF text extraction failed: " (.getMessage e))
       "")))
 
-(defn extract-book-text [file-path]
+(defn extract-book-text-with-status [file-path]
   (let [filename (.getName (io/file file-path))
         ext (str/lower-case (some-> (re-find #"\.([^.]+)$" filename) second))]
     (cond
-      (= ext "epub") (extract-epub-text file-path)
-      (= ext "fb2") (extract-fb2-text file-path)
-      (= ext "pdf") (let [extracted (extract-pdf-text file-path)]
-                      (if (and (not (str/blank? extracted)) (> (count (str/trim extracted)) 50))
-                        (do
-                          (println "ℹ️ Digital PDF detected, using raw text extraction.")
-                          extracted)
-                        (do
-                          (println "ℹ️ Scanned PDF detected or empty text, falling back to page-by-page OCR.")
-                          (ocr-pdf-pages file-path))))
-      (= ext "djvu") (let [extracted (extract-djvu-text file-path)]
-                       (if (and (not (str/blank? extracted)) (> (count (str/trim extracted)) 50))
-                         (do
-                           (println "ℹ️ Digital DJVU detected, using raw text extraction.")
-                           extracted)
-                         (do
-                           (println "ℹ️ Scanned DJVU detected or empty text, falling back to page-by-page OCR.")
-                           (ocr-djvu-pages file-path))))
-      :else (run-ocr file-path))))
+      (or (= ext "epub") (= ext "fb2"))
+      {:text (if (= ext "epub") (extract-epub-text file-path) (extract-fb2-text file-path))
+       :ocr-status "not_required"}
+
+      (= ext "pdf")
+      (let [extracted (extract-pdf-text file-path)]
+        (if (and (not (str/blank? extracted)) (> (count (str/trim extracted)) 50))
+          (do
+            (write-log! (str "ℹ️ Digital PDF detected: '" filename "'. Using raw text extraction (Native)."))
+            {:text extracted :ocr-status "not_required"})
+          (do
+            (write-log! (str "ℹ️ Scanned PDF detected or empty native text: '" filename "'. Falling back to local OCR scanning."))
+            (let [ocr-res (ocr-pdf-pages file-path)]
+              (if (and (not (str/blank? ocr-res)) (> (count (str/trim ocr-res)) 10))
+                (do
+                  (write-log! (str "✅ Local OCR reading succeeded on PDF: '" filename "'."))
+                  {:text ocr-res :ocr-status "success"})
+                (do
+                  (write-log! (str "❌ Local OCR reading FAILED on PDF: '" filename "'."))
+                  {:text ocr-res :ocr-status "failed"}))))))
+
+      (= ext "djvu")
+      (let [extracted (extract-djvu-text file-path)]
+        (if (and (not (str/blank? extracted)) (> (count (str/trim extracted)) 50))
+          (do
+            (write-log! (str "ℹ️ Digital DJVU detected: '" filename "'. Using raw text extraction (Native)."))
+            {:text extracted :ocr-status "not_required"})
+          (do
+            (write-log! (str "ℹ️ Scanned DJVU detected or empty native text: '" filename "'. Falling back to local ddjvu OCR scanning."))
+            (let [ocr-res (ocr-djvu-pages file-path)]
+              (if (and (not (str/blank? ocr-res)) (> (count (str/trim ocr-res)) 10))
+                (do
+                  (write-log! (str "✅ Local OCR reading succeeded on DJVU: '" filename "'."))
+                  {:text ocr-res :ocr-status "success"})
+                (do
+                  (write-log! (str "❌ Local OCR reading FAILED on DJVU: '" filename "'."))
+                  {:text ocr-res :ocr-status "failed"}))))))
+
+      :else
+      (let [ocr-res (run-ocr file-path)]
+        (if (and (not (str/blank? ocr-res)) (> (count (str/trim ocr-res)) 10))
+          (do
+            (write-log! (str "✅ Local OCR reading succeeded on default parser file: '" filename "'."))
+            {:text ocr-res :ocr-status "success"})
+          (do
+            (write-log! (str "❌ Local OCR reading FAILED on default parser file: '" filename "'."))
+            {:text ocr-res :ocr-status "failed"}))))))
+
+(defn extract-book-text [file-path]
+  (:text (extract-book-text-with-status file-path)))
 
 (defn process-book [file-path config]
   (let [filename (.getName (io/file file-path))
         _ (write-log! (str "📖 [Librarian] Processing publication: " filename))
-        ocr-text (extract-book-text file-path)
+        extracted-res (extract-book-text-with-status file-path)
+        ocr-text (:text extracted-res)
+        ocr-status (:ocr-status extracted-res)
         confidence-threshold (:confidenceThreshold config 70)
         output-dir (:outputDir config "/data/sorted_library")
         destination-template (:destinationTemplate config "{Author} - {Title} ({Year})")
@@ -741,11 +792,11 @@
         (io/copy (io/file file-path) (io/file final-dest))
         (when auto-cleanup?
           (io/delete-file (io/file file-path) true))
-        {:status "completed" :meta metadata :destination final-dest :ocr ocr-text})
+        {:status "completed" :meta metadata :destination final-dest :ocr ocr-text :ocr-status ocr-status})
       (do
         (let [conf (or (and metadata (:confidence metadata)) 0)]
           (write-log! (str "⚠️ [Librarian] Classification for '" filename "' fell below confidence threshold (Threshold: " confidence-threshold "% | Got: " conf "%)")))
-        {:status "low_confidence" :reason "Low confidence" :ocr ocr-text}))))
+        {:status "low_confidence" :reason "Low confidence" :ocr ocr-text :ocr-status ocr-status}))))
 
 (defn get-cached-status [state path]
   (let [scanned (or (:scanned_books state) [])]
@@ -766,6 +817,7 @@
                           :filename filename
                           :isbn_detected (if (or (nil? isbn) (= isbn "null") (= isbn "None")) nil isbn)
                           :status status
+                          :ocr_status (:ocr-status res)
                           :timestamp timestamp}
         new-scanned (if scanned-idx
                       (assoc scanned scanned-idx new-scanned-item)

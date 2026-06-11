@@ -58,7 +58,8 @@
                                      (map (fn [sb]
                                             (let [path (or (get sb "filepath") (get sb :filepath))
                                                   org (get orgs-map path)
-                                                  entry {:status (or (get sb "status") (get sb :status))}]
+                                                  entry {:status (or (get sb "status") (get sb :status))
+                                                         :ocr-status (or (get sb "ocr_status") (get sb :ocr_status))}]
                                               [path (if org
                                                       (assoc entry
                                                              :destination (or (get org "dest_path") (get org :dest_path))
@@ -203,36 +204,181 @@
         [:span.w-2.h-2.rounded-full.bg-emerald-500.animate-pulse]
         [:span.text-emerald-400.font-mono.font-semibold "ONLINE"]]]]]))
 
+(defn ocr-monitor-component []
+  (let [books (let [b (:scanned-books @app-state)]
+                (if (map? b) b (into {} b)))
+        is-scanning (:is-scanning @app-state)
+        filter-ocr (or (:filter-ocr @app-state) "all")
+        
+        ;; Compute Statistics
+        total-scanned (count books)
+        success-ocr (count (filter #(= (:ocr-status (second %)) "success") books))
+        failed-ocr (count (filter #(= (:ocr-status (second %)) "failed") books))
+        native-ocr (count (filter #(= (:ocr-status (second %)) "not_required") books))
+        pending-scans (count (filter #(or (= (:status (second %)) "pending") (= (:status (second %)) "queued")) books))
+        
+        processed-scans (- total-scanned pending-scans)
+        progress-percent (if (pos? total-scanned) (int (* 100 (/ processed-scans total-scanned))) 0)]
+    [:div.bg-dark-12.p-6.rounded-xl.border.border-white-5.space-y-6
+     [:div.flex.items-center.justify-between
+      [:div
+       [:h3.text-md.font-serif.text-brand "📟 Scanning & OCR Progress Monitor"]
+       [:p {:class "text-[11px] text-gray-400 leading-snug"}
+        (if is-scanning 
+          "⏳ Core engine active. Rendering local pages & running Tesseract OCR..."
+          "✓ Intake check complete. All pipelines idle.")]]
+      [:div.flex.items-center.space-x-2
+       [:span.text-xs.font-mono.text-gray-400 (str processed-scans " / " total-scanned " Completed")]
+       [:span {:class (str "w-2 h-2 rounded-full " (if is-scanning "bg-emerald-400 animate-pulse" "bg-gray-600"))}]]]
+     
+     ;; Progress Bar
+     [:div.w-full.bg-black.rounded-full.h-2.5.overflow-hidden.border.border-white-5
+      [:div.bg-brand.h-full.transition-all.duration-500
+       {:style {:width (str progress-percent "%")}}]]
+     
+     ;; Stats Widget Selector Row
+     [:div.grid.grid-cols-2.gap-3
+      {:class "sm:grid-cols-5"}
+      ;; Selector 1: All Files
+      [:button.p-4.rounded-xl.border.text-left.transition-all.flex.flex-col.justify-between.space-y-2.cursor-pointer
+       {:class (if (= filter-ocr "all")
+                 "bg-brand-soft border-brand text-white shadow-lg"
+                 "bg-black-30 border-white-5 text-gray-400 hover:text-white hover:border-white-15")
+        :on-click #(swap! app-state assoc :filter-ocr "all")}
+       [:div.flex.items-center.justify-between
+        [:span {:class "text-[10px] font-mono uppercase tracking-wider"} "Total Files"]
+        [:span.text-xs "🗂️"]]
+       [:span.text-2xl.font-mono.font-bold total-scanned]]
+      
+      ;; Selector 2: OCR Succeeded
+      [:button.p-4.rounded-xl.border.text-left.transition-all.flex.flex-col.justify-between.space-y-2.cursor-pointer
+       {:class (if (= filter-ocr "success")
+                 "bg-emerald-950/40 border-emerald-500 text-emerald-400 shadow-lg"
+                 "bg-black-30 border-white-5 text-emerald-400/75 hover:text-emerald-300 hover:border-emerald-500/50")
+        :on-click #(swap! app-state assoc :filter-ocr "success")}
+       [:div.flex.items-center.justify-between
+        [:span {:class "text-[10px] font-mono uppercase tracking-wider"} "OCR Success"]
+        [:span.text-xs "✅"]]
+       [:span.text-2xl.font-mono.font-bold success-ocr]]
+
+      ;; Selector 3: OCR Failed
+      [:button.p-4.rounded-xl.border.text-left.transition-all.flex.flex-col.justify-between.space-y-2.cursor-pointer
+       {:class (if (= filter-ocr "failed")
+                 "bg-rose-950/40 border-rose-500 text-rose-400 shadow-lg"
+                 "bg-black-30 border-white-5 text-rose-400/75 hover:text-rose-300 hover:border-rose-500/50")
+        :on-click #(swap! app-state assoc :filter-ocr "failed")}
+       [:div.flex.items-center.justify-between
+        [:span {:class "text-[10px] font-mono uppercase tracking-wider"} "OCR Failed"]
+        [:span.text-xs "❌"]]
+       [:span.text-2xl.font-mono.font-bold failed-ocr]]
+
+      ;; Selector 4: Native Digital (No OCR Required)
+      [:button.p-4.rounded-xl.border.text-left.transition-all.flex.flex-col.justify-between.space-y-2.cursor-pointer
+       {:class (if (= filter-ocr "not_required")
+                 "bg-blue-950/40 border-blue-500 text-blue-400 shadow-lg"
+                 "bg-black-30 border-white-5 text-blue-400/75 hover:text-blue-300 hover:border-blue-500/50")
+        :on-click #(swap! app-state assoc :filter-ocr "not_required")}
+       [:div.flex.items-center.justify-between
+        [:span {:class "text-[10px] font-mono uppercase tracking-wider"} "Native Text"]
+        [:span.text-xs "⚡"]]
+       [:span.text-2xl.font-mono.font-bold native-ocr]]
+
+      ;; Selector 5: Queued & Pending
+      [:button.p-4.rounded-xl.border.text-left.transition-all.flex.flex-col.justify-between.space-y-2.cursor-pointer
+       {:class (if (= filter-ocr "queued")
+                 "bg-amber-950/45 border-amber-500 text-amber-500 shadow-lg"
+                 "bg-black-30 border-white-5 text-amber-500/75 hover:text-amber-400 hover:border-amber-500/50")
+        :on-click #(swap! app-state assoc :filter-ocr "queued")}
+       [:div.flex.items-center.justify-between
+        [:span {:class "text-[10px] font-mono uppercase tracking-wider"} "Queued"]
+        [:span.text-xs "⏳"]]
+       [:span.text-2xl.font-mono.font-bold pending-scans]]]
+
+     ;; Active Filter Reset Row
+     (when-not (= filter-ocr "all")
+       [:div.flex.items-center.justify-between.bg-black-30.p-3.rounded-lg.border.border-white-5.text-xs
+        [:span.text-gray-400 (str "Showing: " 
+                                  (case filter-ocr
+                                    "success" "Successful OCR scans only"
+                                    "failed" "Failed OCR scans only (highlighted)"
+                                    "not_required" "Digital Native records (No OCR required)"
+                                    "queued" "Pending / queued simulation records"
+                                    "All files"))]
+        [:button.text-brand.font-mono.font-bold.hover:underline.cursor-pointer {:on-click #(swap! app-state assoc :filter-ocr "all")} "✕ Clear Filter"]])]))
+
 (defn content-sandbox []
   (let [books (let [b (:scanned-books @app-state)]
                 (if (map? b) b (into {} b)))
         logs (:logs @app-state)
-        is-scanning (:is-scanning @app-state)]
+        is-scanning (:is-scanning @app-state)
+        filter-ocr (or (:filter-ocr @app-state) "all")
+        
+        ;; Compute Statistics
+        total-scanned (count books)
+        success-ocr (count (filter #(= (:ocr-status (second %)) "success") books))
+        failed-ocr (count (filter #(= (:ocr-status (second %)) "failed") books))
+        native-ocr (count (filter #(= (:ocr-status (second %)) "not_required") books))
+        pending-scans (count (filter #(or (= (:status (second %)) "pending") (= (:status (second %)) "queued")) books))
+        
+        processed-scans (- total-scanned pending-scans)
+        progress-percent (if (pos? total-scanned) (int (* 100 (/ processed-scans total-scanned))) 0)
+        
+        filtered-books (filter (fn [[path entry]]
+                                 (cond
+                                   (= filter-ocr "all") true
+                                   (= filter-ocr "success") (= (:ocr-status entry) "success")
+                                   (= filter-ocr "failed") (= (:ocr-status entry) "failed")
+                                   (= filter-ocr "not_required") (= (:ocr-status entry) "not_required")
+                                   (= filter-ocr "queued") (or (= (:status entry) "pending") (= (:status entry) "queued"))
+                                   :else true))
+                               books)]
     [:div.space-y-6
      ;; Header/Overview block
-     [:div.border-b.border-white-5.pb-4
-      [:h2.text-2xl.font-serif.text-white.font-semibold "⚡ Interactive Sandbox Hub"]
-      [:p.text-xs.text-gray-400 "Queue file paths manually to simulate cataloguing runs, or run active polling daemon checks."]]
+     [:div.border-b.border-white-5.pb-4.flex.flex-col.gap-4
+      {:class "sm:flex-row sm:items-center sm:justify-between"}
+      [:div
+       [:h2.text-2xl.font-serif.text-white.font-semibold "⚡ Interactive Sandbox Hub"]
+       [:p.text-xs.text-gray-400 "Queue file paths manually to simulate cataloguing runs, or run active polling daemon checks."]]
+      [:button.px-3.py-2.border.rounded-lg.transition-all
+       {:class "border-rose-500/25 bg-rose-950/20 hover:bg-rose-900/40 text-rose-400 text-xs font-mono"
+        :on-click (fn []
+                    (clean-state! "all")
+                    (swap! app-state assoc :filter-ocr "all"))}
+       "🗑️ Clear Database"]]
 
-     [:div.grid.grid-cols-1.lg:grid-cols-3.gap-6
+     ;; Shared Scanning Progress Dashboard Component
+     [ocr-monitor-component]
+
+     [:div.grid.grid-cols-1.gap-6
+      {:class "lg:grid-cols-3"}
       ;; Main column (2/3 width) - Monitored Folder Index Stream
-      [:div.lg:col-span-2.space-y-6
+      [:div.space-y-6
+       {:class "lg:col-span-2"}
        [:div.bg-dark-12.p-6.rounded-xl.border.border-white-5.flex.flex-col
-        [:h3.text-lg.font-serif.text-white.mb-4 "🗃️ Monitored Folder Index Stream"]
-        (if (empty? books)
+        [:div.flex.items-center.justify-between.mb-4
+         [:h3.text-lg.font-serif.text-white "🗃️ Monitored Folder Index Stream"]
+         [:span.text-xs.font-mono.text-gray-400 (str "Showing " (count filtered-books) " records")]]
+        (if (empty? filtered-books)
           [:div.p-8.text-center.border.border-dashed.border-white-10.rounded-lg
-           [:p.text-xs.text-gray-500 "Intake stream queue is empty. Ready for scanning or simulator items."]]
+           [:p.text-xs.text-gray-500 "No publication files match the active filter criteria."]]
           [:div.space-y-3.overflow-y-auto.pr-1 {:class "max-h-[600px]"}
-           (for [[path entry] books]
+           (for [[path entry] filtered-books]
              (let [status (:status entry)
                    status-class (case status
                                   "completed" "bg-emerald-950/80 text-emerald-400 border border-emerald-900"
                                   "pending" "bg-amber-950/80 text-amber-400 border border-amber-900"
                                   "queued" "bg-blue-950/80 text-blue-400 border border-blue-900"
                                   "low_confidence" "bg-rose-950/80 text-rose-400 border border-rose-900"
-                                  "bg-white-5 text-brand border border-white-10")]
+                                  "bg-white-5 text-brand border border-white-10")
+                   ocr-status (:ocr-status entry)
+                   ocr-badge (case ocr-status
+                               "success" [:span {:class "text-[9px] uppercase px-1.5 py-0.5 rounded font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"} "✅ OCR Succeeded"]
+                               "failed" [:span {:class "text-[9px] uppercase px-1.5 py-0.5 rounded font-mono font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20 animate-pulse"} "⚠️ OCR Failed"]
+                               "not_required" [:span {:class "text-[9px] uppercase px-1.5 py-0.5 rounded font-mono font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20"} "⚡ Native Text"]
+                               nil)]
                ^{:key path}
-               [:div.p-4.rounded-lg.border.border-white-5.bg-card-bg.space-y-3
+               [:div.p-4.rounded-lg.border.bg-card-bg.space-y-3
+                {:class (if (= ocr-status "failed") "border-rose-500/30 shadow-md bg-rose-950/5" "border-white-5")}
                 [:div.flex.items-start.justify-between.gap-4
                  [:div.flex-1.min-w-0
                   [:p.text-xs.font-mono.text-gray-400.truncate path]
@@ -243,9 +389,11 @@
                        [:p.text-xs.text-gray-300 (str "by " (:author meta) " (" (or (:year meta) "N/A") ")")]
                        [:p.text-xs.text-gray-400.font-mono (str "ISBN: " (or (:isbn meta) "None") " | Genre: " (or (:genre meta) "N/A"))]]
                       [:p.text-xs.text-gray-500 "Pending classification scan..."]))]
-                 [:span.uppercase.px-2.py-1.rounded.font-mono.font-semibold.h-fit
-                  {:class (str "text-[10px] " status-class)}
-                  (or status "unknown")]]
+                 [:div.flex.flex-col.items-end.gap-2.shrink-0
+                  [:span.uppercase.px-2.py-1.rounded.font-mono.font-semibold.h-fit
+                   {:class (str "text-[10px] " status-class)}
+                   (or status "unknown")]
+                  (when ocr-badge ocr-badge)]]
                 (when (:destination entry)
                   [:p {:class "text-xs font-mono text-emerald-400 p-2 rounded bg-emerald-950/30 border border-emerald-900/40"}
                    "🚚 Destination: " (:destination entry)])]))])]]
@@ -864,6 +1012,9 @@
      [:div.border-b.border-white-5.pb-4
       [:h2.text-2xl.font-serif.text-white.font-semibold "🗄️ System Database Registries"]
       [:p.text-xs.text-gray-400 "Inspect state.json table records, cataloging logs, OCR results, and physical filesystems metadata in real-time."]]
+
+     ;; Shared Scanning Progress Dashboard Component
+     [ocr-monitor-component]
 
      ;; Sub-tab selection menu
      [:div.grid.grid-cols-2.md:grid-cols-4.gap-3

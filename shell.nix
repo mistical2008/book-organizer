@@ -29,6 +29,8 @@ pkgs.mkShell {
 
     # System Utilities for OCR
     tesseract-custom
+    pkgs.poppler_utils
+    pkgs.djvulibre
   ];
 
   # Expose Tesseract dictionaries to pytesseract on NixOS
