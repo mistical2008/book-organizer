@@ -432,22 +432,96 @@
     (or (str/ends-with? filename ".epub")
         (str/ends-with? filename ".fb2"))))
 
-(defn extract-xml-text [file-path]
+(defn extract-epub-text [file-path]
   (try
-    (println "📖 [Librarian] Extracting text from markup file: " file-path)
-    (let [result (sh "python3" "src/clojure/librarian/extractor.py" file-path)]
+    (let [f (io/file file-path)]
+      (if (.exists f)
+        (with-open [zip (java.util.zip.ZipFile. f)]
+          (let [entries (enumeration-seq (.entries zip))
+                html-entries (->> entries
+                                  (filter (fn [entry]
+                                            (let [name (str/lower-case (.getName entry))]
+                                              (and (not (.isDirectory entry))
+                                                   (or (str/ends-with? name ".html")
+                                                       (str/ends-with? name ".xhtml")
+                                                       (str/ends-with? name ".xml")
+                                                       (str/ends-with? name ".htm"))))))
+                                  (sort-by #(.getName %))
+                                  (take 30))]
+            (loop [es html-entries
+                   acc []
+                   total-chars 0]
+              (if (or (empty? es) (> total-chars 250000))
+                (str/join "\n" acc)
+                (let [entry (first es)
+                      content (try
+                                (with-open [is (.getInputStream zip entry)]
+                                  (let [text (slurp is :encoding "UTF-8")]
+                                    (str/replace text #"<[^>]+>" " ")))
+                                (catch Exception _ ""))]
+                  (recur (rest es)
+                         (conj acc content)
+                         (+ total-chars (count content))))))))
+        ""))
+    (catch Exception e
+      (println "⚠️ Failed to extract EPUB text in Clojure: " (.getMessage e))
+      "")))
+
+(defn extract-fb2-text [file-path]
+  (try
+    (let [file (io/file file-path)
+          lower-name (str/lower-case (.getName file))]
+      (if (.exists file)
+        (if (str/ends-with? lower-name ".zip")
+          (with-open [zip (java.util.zip.ZipFile. file)]
+            (let [entries (enumeration-seq (.entries zip))
+                  fb2-entry (first (filter #(str/ends-with? (str/lower-case (.getName %)) ".fb2") entries))]
+              (if fb2-entry
+                (with-open [is (.getInputStream zip fb2-entry)]
+                  (-> (slurp is :encoding "UTF-8")
+                      (str/replace #"<[^>]+>" " ")
+                      str/trim))
+                "")))
+          (let [content (slurp file-path :encoding "UTF-8")]
+            (-> content
+                (str/replace #"<[^>]+>" " ")
+                str/trim)))
+        ""))
+    (catch Exception e
+      (println "⚠️ Failed to extract FB2 text in Clojure: " (.getMessage e))
+      "")))
+
+(defn extract-pdf-text [file-path]
+  (try
+    (println "📖 [Librarian] Extracting text from PDF (pdftotext):" file-path)
+    (let [result (sh "pdftotext" file-path "-")]
       (if (zero? (:exit result))
         (:out result)
         ""))
     (catch Exception e
-      (println "⚠️ Markup text extraction failed: " (.getMessage e))
+      (println "⚠️ PDF text extraction failed: " (.getMessage e))
       "")))
+
+(defn extract-book-text [file-path]
+  (let [filename (.getName (io/file file-path))
+        ext (str/lower-case (some-> (re-find #"\.([^.]+)$" filename) second))]
+    (cond
+      (= ext "epub") (extract-epub-text file-path)
+      (= ext "fb2") (extract-fb2-text file-path)
+      (= ext "pdf") (let [extracted (extract-pdf-text file-path)]
+                      (if (and (not (str/blank? extracted)) (> (count (str/trim extracted)) 50))
+                        (do
+                          (println "ℹ️ Digital PDF detected, using raw text extraction.")
+                          extracted)
+                        (do
+                          (println "ℹ️ Scanned PDF detected or empty text, falling back to OCR.")
+                          (run-ocr file-path))))
+      :else (run-ocr file-path))))
 
 (defn process-book [file-path config]
   (let [filename (.getName (io/file file-path))
         _ (write-log! (str "📖 [Librarian] Processing publication: " filename))
-        markup? (markup-file? file-path)
-        ocr-text (if markup? (extract-xml-text file-path) (run-ocr file-path))
+        ocr-text (extract-book-text file-path)
         confidence-threshold (:confidenceThreshold config 70)
         output-dir (:outputDir config "/data/sorted_library")
         destination-template (:destinationTemplate config "{Author} - {Title} ({Year})")

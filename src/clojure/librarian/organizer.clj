@@ -21,8 +21,7 @@
 
 (defn organize-single-file! [file-path config state]
   (let [filename (.getName (io/file file-path))
-        markup? (core/markup-file? file-path)
-        ocr-text (if markup? (core/extract-xml-text file-path) (core/run-ocr file-path))
+        ocr-text (core/extract-book-text file-path)
         confidence-threshold (:confidenceThreshold config 70)
         output-dir (:outputDir config "/data/sorted_library")
         destination-template (:destinationTemplate config "{Author} - {Title} ({Year})")
@@ -31,7 +30,8 @@
         isbn-only? (:isbnOnlyRequests config)
         
         ;; Use Core equations to find ISBN and metadata
-        isbn-match (core/extract-valid-isbn ocr-text)
+        isbn-match (or (core/extract-valid-isbn ocr-text)
+                       (core/extract-valid-isbn filename))
         metadata (cond
                    (and isbn-match (not (str/blank? isbn-match)))
                    (core/query-book-metadata isbn-match)
