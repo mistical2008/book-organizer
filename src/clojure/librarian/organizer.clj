@@ -21,7 +21,8 @@
 
 (defn organize-single-file! [file-path config state]
   (let [filename (.getName (io/file file-path))
-        ocr-text (core/run-ocr file-path)
+        markup? (core/markup-file? file-path)
+        ocr-text (if markup? (core/extract-xml-text file-path) (core/run-ocr file-path))
         confidence-threshold (:confidenceThreshold config 70)
         output-dir (:outputDir config "/data/sorted_library")
         destination-template (:destinationTemplate config "{Author} - {Title} ({Year})")
@@ -85,7 +86,7 @@
         input-dirs (or (:inputDirs config) ["/data/books_to_sort"])
         enable-caching? (not= (:enableCaching config) false)
         resolved-inputs (map core/resolve-path input-dirs)
-        files (filter #(and (.isFile %) (re-find #"\.(pdf|epub|djvu)$" (.getName %)))
+        files (filter #(and (.isFile %) (re-find #"\.(pdf|epub|djvu|fb2)$" (.getName %)))
                       (mapcat #(.listFiles (io/file %)) resolved-inputs))
         files-count (count files)
         first-three-names (map #(.getName %) (take 3 files))]

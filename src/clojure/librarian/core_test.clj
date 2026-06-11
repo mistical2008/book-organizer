@@ -28,7 +28,12 @@ ISBN 966-569-026-4
   (testing "Extraction of typical Ukrainian publisher ISBN and OCR variations"
     (let [result (extract-valid-isbn scanned-ocr-text)]
       (println "🔎 [Clojure Scanner] Extracted result:" result)
-      (is (= result "9665690264")))))
+      (is (= result "9665690264"))))
+  (testing "Extraction of spaced-out ISBN-13"
+    (let [spaced-text "Something before... ІSВN 978 - 966 - 2449 - 01 - 3 ...something after"
+          result (extract-valid-isbn spaced-text)]
+      (println "🔎 [Clojure Scanner] Extracted spaced result:" result)
+      (is (= result "9789662449013")))))
 
 (defn -main []
   (println "🧪 [Clojure test runner] Executing metadata scanning assertions...")

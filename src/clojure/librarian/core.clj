@@ -286,15 +286,15 @@
 (defn extract-valid-isbn [text]
   (if (str/blank? text)
     nil
-    ;; 1. Accurate match with prefix
-    (let [prefix-pattern #"(?i)(?:[I1l|іІ!\[\]][S58sЅѕ][B8bВв][NnНнМм])(?:[- ]*1[03])?:?\s*([0-9Xx](?:[- ]?[0-9Xx]){9,12})"
+    ;; 1. Accurate match with prefix (handles arbitrary spacing like ' - ' between digits)
+    (let [prefix-pattern #"(?i)(?:[I1l|іІ!\[\]][S58sЅѕ][B8bВв][NnНнМм])(?:[- ]*1[03])?:?\s*([0-9Xx](?:\s*[- ]\s*[0-9Xx]|[0-9Xx]){9,18})"
           prefix-matches (re-seq prefix-pattern text)
           prefix-candidates (map #(str/replace (second %) #"[^0-9Xx]" "") prefix-matches)
           valid-prefix (first (filter valid-isbn? prefix-candidates))]
       (if (seq valid-prefix)
         valid-prefix
         ;; 2. Fallback to raw numeric sequences
-        (let [fallback-pattern #"\b[0-9Xx](?:[- ]?[0-9Xx]){9,12}\b"
+        (let [fallback-pattern #"\b[0-9Xx](?:\s*[- ]\s*[0-9Xx]|[0-9Xx]){9,18}\b"
               fallback-matches (re-seq fallback-pattern text)
               fallback-candidates (map #(str/replace % #"[^0-9Xx]" "") fallback-matches)]
           (first (filter valid-isbn? fallback-candidates)))))))
@@ -427,10 +427,27 @@
         (zero? (:exit (sh "tesseract" "--version"))))
     (catch Exception _ false)))
 
+(defn markup-file? [file-path]
+  (let [filename (str/lower-case (.getName (io/file file-path)))]
+    (or (str/ends-with? filename ".epub")
+        (str/ends-with? filename ".fb2"))))
+
+(defn extract-xml-text [file-path]
+  (try
+    (println "📖 [Librarian] Extracting text from markup file: " file-path)
+    (let [result (sh "python3" "src/clojure/librarian/extractor.py" file-path)]
+      (if (zero? (:exit result))
+        (:out result)
+        ""))
+    (catch Exception e
+      (println "⚠️ Markup text extraction failed: " (.getMessage e))
+      "")))
+
 (defn process-book [file-path config]
   (let [filename (.getName (io/file file-path))
         _ (write-log! (str "📖 [Librarian] Processing publication: " filename))
-        ocr-text (run-ocr file-path)
+        markup? (markup-file? file-path)
+        ocr-text (if markup? (extract-xml-text file-path) (run-ocr file-path))
         confidence-threshold (:confidenceThreshold config 70)
         output-dir (:outputDir config "/data/sorted_library")
         destination-template (:destinationTemplate config "{Author} - {Title} ({Year})")
@@ -578,7 +595,7 @@
         input-dirs (or (:inputDirs config) ["/data/books_to_sort"])
         enable-caching? (not= (:enableCaching config) false)
         resolved-inputs (map resolve-path input-dirs)
-        files (filter #(and (.isFile %) (re-find #"\.(pdf|epub|djvu)$" (.getName %)))
+        files (filter #(and (.isFile %) (re-find #"\.(pdf|epub|djvu|fb2)$" (.getName %)))
                       (mapcat (fn [d]
                                 (let [f (io/file d)]
                                   (if (and (.exists f) (.isDirectory f))
