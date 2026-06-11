@@ -1,6 +1,10 @@
 { pkgs ? import <nixpkgs> {} }:
 
 let
+  tesseract-custom = pkgs.tesseract.override {
+    enableLanguages = [ "eng" "ukr" "srp" "srp_latn" ];
+  };
+
   # Custom python with packages
   pythonWithPackages = pkgs.python3.withPackages (ps: with ps; [
     pillow
@@ -24,20 +28,19 @@ pkgs.mkShell {
     pythonWithPackages
 
     # System Utilities for OCR
-    pkgs.tesseract
-    pkgs.tesseract-ocr-eng
-    pkgs.tesseract-ocr-ukr
+    tesseract-custom
   ];
 
   # Expose Tesseract dictionaries to pytesseract on NixOS
   shellHook = ''
-    export TESSDATA_PREFIX="${pkgs.tesseract-ocr-eng}/share/tessdata"
-    export TESSDATA_UKR_PREFIX="${pkgs.tesseract-ocr-ukr}/share/tessdata"
+    export TESSDATA_PREFIX="${tesseract-custom}/share/tessdata"
     
-    # We create a symlink to combine dictionaries so tesseract can find both eng and ukr
+    # We create a symlink to combine dictionaries so tesseract can find all of them
     mkdir -p .tessdata
-    ln -sf ${pkgs.tesseract-ocr-eng}/share/tessdata/eng.traineddata .tessdata/
-    ln -sf ${pkgs.tesseract-ocr-ukr}/share/tessdata/ukr.traineddata .tessdata/
+    ln -sf ${tesseract-custom}/share/tessdata/eng.traineddata .tessdata/
+    ln -sf ${tesseract-custom}/share/tessdata/ukr.traineddata .tessdata/
+    ln -sf ${tesseract-custom}/share/tessdata/srp.traineddata .tessdata/
+    ln -sf ${tesseract-custom}/share/tessdata/srp_latn.traineddata .tessdata/
     export TESSDATA_PREFIX="$(pwd)/.tessdata"
 
     echo ""

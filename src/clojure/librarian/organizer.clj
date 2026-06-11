@@ -20,7 +20,8 @@
     (println "[Organizer]" msg)))
 
 (defn organize-single-file! [file-path config state]
-  (let [ocr-text (core/run-ocr file-path)
+  (let [filename (.getName (io/file file-path))
+        ocr-text (core/run-ocr file-path)
         confidence-threshold (:confidenceThreshold config 70)
         output-dir (:outputDir config "/data/sorted_library")
         destination-template (:destinationTemplate config "{Author} - {Title} ({Year})")
@@ -38,7 +39,7 @@
                    nil
 
                    :else
-                   (try (core/extract-via-gemini ocr-text gemini-model)
+                   (try (core/extract-via-gemini ocr-text filename gemini-model)
                         (catch Exception e
                           (println "⚠️ Gemini extraction failure: " (.getMessage e))
                           nil)))]
