@@ -40,9 +40,20 @@
                            :isbn (or isbn "9780199540020")
                            :confidence 100}
                            
-                projected-filename (core/compute-destination mock-meta dest-template)
+                dest-name (core/compute-destination mock-meta dest-template)
+                raw-segments (str/split dest-name #"[/\\\\]+")
+                file-base-name (or (last raw-segments) "Untitled Book")
+                template-subdirs (filter #(not (str/blank? %)) (map core/sanitize (butlast raw-segments)))
+                
+                resolved-out-dir (core/resolve-path output-dir)
+                sub-dirs (if (seq template-subdirs)
+                           template-subdirs
+                           [(core/sanitize (:genre mock-meta))])
+                
+                file-folder (core/sanitize file-base-name)
+                category-folder (str/join "/" (concat [resolved-out-dir] sub-dirs [file-folder]))
                 clean-ext (or (re-find #"\.[a-zA-Z0-9]+$" name) ".pdf")
-                projected-destination (str (core/resolve-path output-dir) "/" mock-meta.genre "/" name "/" projected-filename clean-ext)]
+                projected-destination (str category-folder "/" file-folder clean-ext)]
             
             (println "--------------------------------------------------------")
             (println "⚡ [Sandbox Simulation Report] Sourced file:" path)

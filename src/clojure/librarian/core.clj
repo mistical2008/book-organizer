@@ -366,6 +366,39 @@
         (write-log! (str "❌ [Open Library API] Request failed for ISBN: " clean-isbn " - Error: " (.getMessage e)))
         nil))))
 
+(def tesseract-paths
+  ["tesseract"
+   "/run/current-system/sw/bin/tesseract"
+   "/nix/var/nix/profiles/default/bin/tesseract"
+   "/usr/bin/tesseract"
+   "/usr/local/bin/tesseract"])
+
+(defn find-valid-tesseract []
+  (first (filter (fn [p]
+                   (try
+                     (let [res (sh p "--version")]
+                       (zero? (:exit res)))
+                     (catch Exception _ false)))
+                 tesseract-paths)))
+
+(defn tesseract-available? []
+  (boolean (find-valid-tesseract)))
+
+(def pdftotext-paths
+  ["pdftotext"
+   "/run/current-system/sw/bin/pdftotext"
+   "/nix/var/nix/profiles/default/bin/pdftotext"
+   "/usr/bin/pdftotext"
+   "/usr/local/bin/pdftotext"])
+
+(defn find-valid-pdftotext []
+  (first (filter (fn [p]
+                   (try
+                     (sh p "-v")
+                     true
+                     (catch Exception _ false)))
+                 pdftotext-paths)))
+
 (defn query-book-metadata [isbn]
   (let [clean-isbn (str/replace isbn #"\D" "")]
     (or (query-google-books clean-isbn)
@@ -373,15 +406,16 @@
 
 (defn run-ocr [file-path]
   (try
-    (println "📝 [Librarian] Translating layout using local tesseract CLI: " file-path)
-    (let [output-base (str file-path "-tmp-txt")
-          result (sh "tesseract" file-path output-base "-l" "eng+ukr+srp+srp_latn")]
-      (if (zero? (:exit result))
-        (let [txt-file (io/file (str output-base ".txt"))
-              txt-content (slurp txt-file)]
-          (io/delete-file txt-file true)
-          txt-content)
-        ""))
+    (let [bin (or (find-valid-tesseract) "tesseract")]
+      (println "📝 [Librarian] Translating layout using local tesseract CLI (" bin "): " file-path)
+      (let [output-base (str file-path "-tmp-txt")
+            result (sh bin file-path output-base "-l" "eng+ukr+srp+srp_latn")]
+        (if (zero? (:exit result))
+          (let [txt-file (io/file (str output-base ".txt"))
+                txt-content (slurp txt-file)]
+            (io/delete-file txt-file true)
+            txt-content)
+          "")))
     (catch Exception e
       (println "⚠️ OCR execution failed (tesseract probably missing):" (.getMessage e))
       "")))
@@ -412,20 +446,15 @@
         year (if (and (:year meta) (> (int (:year meta)) 0)) (str (:year meta)) "Unknown Year")
         genre (or (:genre meta) "Uncategorized")
         isbn (or (:isbn meta) "No ISBN")
-        path-name (-> template
-                      (str/replace "{Author}" author)
-                      (str/replace "{Title}" title)
-                      (str/replace "{Year}" year)
-                      (str/replace "{Genre}" genre)
-                      (str/replace "{ISBN}" isbn))
-        sanitized-path-name (sanitize path-name)]
-    (str sanitized-path-name)))
-
-(defn tesseract-available? []
-  (try
-    (or (zero? (:exit (sh "which" "tesseract")))
-        (zero? (:exit (sh "tesseract" "--version"))))
-    (catch Exception _ false)))
+        interpolated (-> template
+                         (str/replace "{Author}" author)
+                         (str/replace "{Title}" title)
+                         (str/replace "{Year}" year)
+                         (str/replace "{Genre}" genre)
+                         (str/replace "{ISBN}" isbn))
+        segments (str/split interpolated #"[/\\\\]+")
+        sanitized-segments (map sanitize segments)]
+    (str/join "/" sanitized-segments)))
 
 (defn markup-file? [file-path]
   (let [filename (str/lower-case (.getName (io/file file-path)))]
@@ -493,11 +522,12 @@
 
 (defn extract-pdf-text [file-path]
   (try
-    (println "📖 [Librarian] Extracting text from PDF (pdftotext):" file-path)
-    (let [result (sh "pdftotext" file-path "-")]
-      (if (zero? (:exit result))
-        (:out result)
-        ""))
+    (let [bin (or (find-valid-pdftotext) "pdftotext")]
+      (println "📖 [Librarian] Extracting text from PDF (" bin "):" file-path)
+      (let [result (sh bin file-path "-")]
+        (if (zero? (:exit result))
+          (:out result)
+          "")))
     (catch Exception e
       (println "⚠️ PDF text extraction failed: " (.getMessage e))
       "")))
