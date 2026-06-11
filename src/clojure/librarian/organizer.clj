@@ -87,7 +87,12 @@
         enable-caching? (not= (:enableCaching config) false)
         resolved-inputs (map core/resolve-path input-dirs)
         files (filter #(and (.isFile %) (re-find #"\.(pdf|epub|djvu|fb2)$" (.getName %)))
-                      (mapcat #(.listFiles (io/file %)) resolved-inputs))
+                      (mapcat (fn [d]
+                                (let [f (io/file d)]
+                                  (if (and (.exists f) (.isDirectory f))
+                                    (.listFiles f)
+                                    [])))
+                              resolved-inputs))
         files-count (count files)
         first-three-names (map #(.getName %) (take 3 files))]
     (write-log! (str "🚚 [Organizer] Initializing sorting executions on input files. Total files detected to sort: " files-count

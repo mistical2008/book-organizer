@@ -399,6 +399,132 @@
                      (catch Exception _ false)))
                  pdftotext-paths)))
 
+(def pdftoppm-paths
+  ["pdftoppm"
+   "/run/current-system/sw/bin/pdftoppm"
+   "/nix/var/nix/profiles/default/bin/pdftoppm"
+   "/usr/bin/pdftoppm"
+   "/usr/local/bin/pdftoppm"])
+
+(defn find-valid-pdftoppm []
+  (first (filter (fn [p]
+                   (try
+                     (sh p "-v")
+                     true
+                     (catch Exception _ false)))
+                 pdftoppm-paths)))
+
+(def djvutxt-paths
+  ["djvutxt"
+   "/run/current-system/sw/bin/djvutxt"
+   "/nix/var/nix/profiles/default/bin/djvutxt"
+   "/usr/bin/djvutxt"
+   "/usr/local/bin/djvutxt"])
+
+(defn find-valid-djvutxt []
+  (first (filter (fn [p]
+                   (try
+                     (sh p "--help")
+                     true
+                     (catch Exception _ false)))
+                 djvutxt-paths)))
+
+(def ddjvu-paths
+  ["ddjvu"
+   "/run/current-system/sw/bin/ddjvu"
+   "/nix/var/nix/profiles/default/bin/ddjvu"
+   "/usr/bin/ddjvu"
+   "/usr/local/bin/ddjvu"])
+
+(defn find-valid-ddjvu []
+  (first (filter (fn [p]
+                   (try
+                     (sh p "--help")
+                     true
+                     (catch Exception _ false)))
+                 ddjvu-paths)))
+
+(defn find-generated-page-files [prefix]
+  (let [f (io/file prefix)
+        parent (.getParentFile f)
+        base-name (.getName f)
+        all-files (if (and parent (.exists parent)) (.listFiles parent) [])]
+    (->> all-files
+         (filter (fn [file]
+                   (let [name (.getName file)]
+                     (and (str/starts-with? name base-name)
+                          (str/ends-with? (str/lower-case name) ".png")))))
+         (sort-by #(.getName %)))))
+
+(defn ocr-single-image [img-path]
+  (try
+    (let [bin (or (find-valid-tesseract) "tesseract")]
+      (println "📝 [Librarian] OCR page image (" bin "): " img-path)
+      (let [output-base (str img-path "-tmp-txt")
+            result (sh bin img-path output-base "-l" "eng+ukr+srp+srp_latn")]
+        (if (zero? (:exit result))
+          (let [txt-file (io/file (str output-base ".txt"))
+                txt-content (if (.exists txt-file) (slurp txt-file) "")]
+            (when (.exists txt-file) (io/delete-file txt-file true))
+            txt-content)
+          "")))
+    (catch Exception e
+      (println "⚠️ OCR image failed:" (.getMessage e))
+      "")))
+
+(defn ocr-pdf-pages [file-path]
+  (try
+    (let [pdftoppm (or (find-valid-pdftoppm) "pdftoppm")
+          temp-prefix (str file-path "-page")
+          ;; Run pdftoppm to convert pages 1-10 to png
+          res (sh pdftoppm "-png" "-f" "1" "-l" "10" file-path temp-prefix)]
+      (if (zero? (:exit res))
+        (let [files (find-generated-page-files temp-prefix)
+              texts (doall (map (fn [f]
+                                  (let [txt (ocr-single-image (.getAbsolutePath f))]
+                                    (io/delete-file f true)
+                                    txt))
+                                files))]
+          (str/join "\n" texts))
+        ""))
+    (catch Exception e
+      (println "⚠️ OCR pdf pages extraction failed:" (.getMessage e))
+      "")))
+
+(defn extract-djvu-text [file-path]
+  (try
+    (let [bin (or (find-valid-djvutxt) "djvutxt")]
+      (println "📖 [Librarian] Extracting text from DJVU (" bin "):" file-path)
+      ;; Try page restricted text first, or fall back to full if that fails
+      (let [result (sh bin "-page=1-10" file-path "-")]
+        (if (zero? (:exit result))
+          (:out result)
+          (let [res2 (sh bin file-path "-")]
+            (if (zero? (:exit res2))
+              (:out res2)
+              "")))))
+    (catch Exception e
+      (println "⚠️ DJVU text extraction failed:" (.getMessage e))
+      "")))
+
+(defn ocr-djvu-pages [file-path]
+  (try
+    (let [ddjvu (or (find-valid-ddjvu) "ddjvu")
+          temp-prefix (str file-path "-page")
+          res (sh ddjvu "-format=png" "-page=1-10" file-path (str temp-prefix "-%d.png"))]
+      (if (zero? (:exit res))
+        (let [files (find-generated-page-files temp-prefix)
+              texts (doall (map (fn [f]
+                                  (let [txt (ocr-single-image (.getAbsolutePath f))]
+                                    (io/delete-file f true)
+                                    txt))
+                                files))]
+          (str/join "\n" texts))
+        ""))
+    (catch Exception e
+      (println "⚠️ OCR DJVU pages failed:" (.getMessage e))
+      "")))
+
 (defn query-book-metadata [isbn]
   (let [clean-isbn (str/replace isbn #"\D" "")]
     (or (query-google-books clean-isbn)
@@ -544,8 +670,16 @@
                           (println "ℹ️ Digital PDF detected, using raw text extraction.")
                           extracted)
                         (do
-                          (println "ℹ️ Scanned PDF detected or empty text, falling back to OCR.")
-                          (run-ocr file-path))))
+                          (println "ℹ️ Scanned PDF detected or empty text, falling back to page-by-page OCR.")
+                          (ocr-pdf-pages file-path))))
+      (= ext "djvu") (let [extracted (extract-djvu-text file-path)]
+                       (if (and (not (str/blank? extracted)) (> (count (str/trim extracted)) 50))
+                         (do
+                           (println "ℹ️ Digital DJVU detected, using raw text extraction.")
+                           extracted)
+                         (do
+                           (println "ℹ️ Scanned DJVU detected or empty text, falling back to page-by-page OCR.")
+                           (ocr-djvu-pages file-path))))
       :else (run-ocr file-path))))
 
 (defn process-book [file-path config]
