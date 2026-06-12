@@ -629,18 +629,38 @@
                                                                       :isbn {:type "STRING"}
                                                                       :confidence {:type "INTEGER"}
                                                                       :notes {:type "STRING"}}
-                                                         :required ["author" "title" "year" "genre" "isbn" "confidence" "notes"]}}}
-            resp (http/post url {:headers {"Content-Type" "application/json"}
-                                 :body (json/generate-string payload)})
-            body (json/parse-string (:body resp) true)]
-        (if-let [err (:error body)]
-          (throw (Exception. (str "Gemini API Error: " (:message err))))
-          (let [text-response (-> body :candidates first :content :parts first :text)
-                _ (when (str/blank? text-response)
-                    (throw (Exception. "Gemini API returned an empty response.")))
-                cleaned-json (extract-json-string text-response)
-                parsed (json/parse-string cleaned-json true)]
-            (normalize-metadata parsed)))))))
+                                                         :required ["author" "title" "year" "genre" "isbn" "confidence" "notes"]}}}]
+        (loop [attempt 1
+               delay-ms 2000]
+          (let [res (try
+                      (let [resp (http/post url {:headers {"Content-Type" "application/json"}
+                                                 :body (json/generate-string payload)})
+                            body (json/parse-string (:body resp) true)]
+                        (if-let [err (:error body)]
+                          (throw (Exception. (str "Gemini API Error: " (:message err))))
+                          (let [text-response (-> body :candidates first :content :parts first :text)
+                                _ (when (str/blank? text-response)
+                                    (throw (Exception. "Gemini API returned an empty response.")))
+                                cleaned-json (extract-json-string text-response)
+                                parsed (json/parse-string cleaned-json true)]
+                            {:ok (normalize-metadata parsed)})))
+                      (catch Exception e
+                        (let [msg (.getMessage e)]
+                          (if (and (< attempt 5)
+                                   (or (nil? msg)
+                                       (re-find #"429" msg)
+                                       (re-find #"503" msg)
+                                       (re-find #"504" msg)
+                                       (re-find #"status code: 42" msg)
+                                       (re-find #"timeout" (str/lower-case msg))))
+                            (do
+                              (write-log! (str "⚠️ [Librarian] Gemini API transient rate-limit/network hit (Attempt " attempt "/5: " (or msg "unknown exception") "). Retrying in " delay-ms " ms..."))
+                              (Thread/sleep delay-ms)
+                              nil)
+                            (throw e)))))]
+            (if res
+              (:ok res)
+              (recur (inc attempt) (* delay-ms 2)))))))))
 
 (defn sanitize [s]
   (if (nil? s)
