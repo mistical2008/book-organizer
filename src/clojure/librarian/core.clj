@@ -453,7 +453,9 @@
          (filter (fn [file]
                    (let [name (.getName file)]
                      (and (str/starts-with? name base-name)
-                          (str/ends-with? (str/lower-case name) ".png")))))
+                          (or (str/ends-with? (str/lower-case name) ".png")
+                              (str/ends-with? (str/lower-case name) ".tiff")
+                              (str/ends-with? (str/lower-case name) ".tif"))))))
          (sort-by #(.getName %)))))
 
 (defn ocr-single-image [img-path]
@@ -522,7 +524,7 @@
     (let [ddjvu (or (find-valid-ddjvu) "ddjvu")
           temp-prefix (str file-path "-page")
           _ (write-log! (str "📝 [Librarian] Rendering DjVu pages to temporary images with: " ddjvu))
-          res (sh ddjvu "-format=png" "-page=1-10" file-path (str temp-prefix "-%d.png"))]
+          res (sh ddjvu "-format=tiff" "-page=1-10" file-path (str temp-prefix "-%d.tiff"))]
       (if (zero? (:exit res))
         (let [files (find-generated-page-files temp-prefix)
               texts (doall (map (fn [f]
@@ -567,11 +569,19 @@
 (defn parse-safe-int [v default-val]
   (cond
     (nil? v) default-val
-    (number? v) (int v)
+    (number? v) (let [d (double v)]
+                  (if (and (<= d 1.0) (> d 0.0))
+                    (int (* d 100))
+                    (int d)))
     (string? v) (try
-                  (if-let [first-num (re-find #"\d+" v)]
-                    (Integer/parseInt first-num)
-                    default-val)
+                  (if-let [dot-num (re-find #"\d+\.\d+" v)]
+                    (let [d (Double/parseDouble dot-num)]
+                      (if (and (<= d 1.0) (> d 0.0))
+                        (int (* d 100))
+                        (int d)))
+                    (if-let [first-num (re-find #"\d+" v)]
+                      (Integer/parseInt first-num)
+                      default-val))
                   (catch Exception _ default-val))
     :else default-val))
 
@@ -598,7 +608,16 @@
     (if (str/blank? api-key)
       (throw (Exception. "GEMINI_API_KEY environment variable or settings configuration is required."))
       (let [url (str "https://generativelanguage.googleapis.com/v1beta/models/" (or gemini-model "gemini-3.5-flash") ":generateContent?key=" api-key)
-            system-prompt "Act as the Librarian Library Metadata Agent. Extract: author, title, year, genre, isbn. Return JSON: {author, title, year, genre, isbn, confidence, notes}."
+            system-prompt "Act as the Librarian Library Metadata Agent. Analyze the provided book filename and extracted raw text to catalog the book. Extract the following metadata fields and return a raw JSON object with these exact keys:
+- author (string: 'Lastname, Firstname' if possible or multiple authors separated by commas)
+- title (string: capitalized, clean and descriptive title)
+- year (integer: 4-digit publication year or null)
+- genre (string: core subject classification or category)
+- isbn (string or null: 10 or 13 digit number)
+- confidence (integer: a percentage score between 0 and 100 representing your confidence in this classification)
+- notes (string: short rationale for your classification)
+
+Ensure is valid raw JSON. Do not wrap in html tag/blocks."
             text-safe (or text "")
             combined-text (str "Book Filename: " filename "\n\nExtracted content preview (OCR/Text):\n" (subs text-safe 0 (min (count text-safe) 4000)))
             payload {:contents [{:parts [{:text combined-text}]}]
