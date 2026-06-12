@@ -1069,74 +1069,82 @@
                                   files)]
     (if (empty? unprocessed-files)
       state
-      (do
-        (write-log! (str "📦 [Batch Engine] Pre-scanning " (count unprocessed-files) " files for ISBN detection..."))
-        (let [path-isbn-pairs (keep (fn [file]
-                                      (let [path (.getAbsolutePath file)
-                                            filename (.getName file)
-                                            ;; Detect ISBN (tries filename first, then text/OCR extraction)
-                                            isbn (or (extract-valid-isbn filename)
-                                                     (let [res (extract-book-text-with-status path)]
-                                                       (extract-valid-isbn (:text res))))]
-                                        (when (and isbn (not (str/blank? isbn)))
-                                          [path isbn])))
-                                    unprocessed-files)
-              unique-isbns (distinct (map second path-isbn-pairs))
-              existing-cache (or (:batch_isbn_cache state) {})
-              ;; Only fetch ISBNs not already resolved in cache
-              isbns-to-fetch (filter (fn [isbn]
-                                       (let [clean (str/replace isbn #"\D" "")]
-                                         (not (or (contains? existing-cache (keyword clean))
-                                                  (contains? existing-cache clean)))))
-                                     unique-isbns)]
-          (if (empty? isbns-to-fetch)
+      (let [chunk-size 12
+            file-chunks (partition-all chunk-size unprocessed-files)
+            total-chunks (count file-chunks)]
+        (write-log! (str "📦 [Batch Engine] Commencing ISBN scanning for " (count unprocessed-files) 
+                         " unprocessed files in " total-chunks " chunks of " chunk-size " files..."))
+        (loop [remaining-chunks file-chunks
+               current-state state
+               chunk-idx 1]
+          (if-let [chunk-files (first remaining-chunks)]
             (do
-              (write-log! "📦 [Batch Engine] All detected ISBNs are already present in cache.")
-              state)
-            (do
-              (write-log! (str "📡 [Batch Engine] Querying Open Library batch API for " (count isbns-to-fetch) " unresolved ISBNs: " (str/join ", " isbns-to-fetch)))
-              ;; Open Library API supports requesting up to ~15-20 bibkeys at once. We chunk them into groups of 15.
-              (let [chunks (partition-all 15 isbns-to-fetch)
-                    batch-results (reduce (fn [acc-cache chunk]
-                                            (let [bibkeys (str/join "," (map #(str "ISBN:" (str/replace % #"\D" "")) chunk))
-                                                  url (str "https://openlibrary.org/api/books?bibkeys=" bibkeys "&format=json&jscmd=data")]
-                                              (try
-                                                (write-log! (str "📡 [Batch Engine] Fetching block url: " url))
-                                                (let [resp (http/get url {:headers {"User-Agent" "Librarian-Babashka/1.0"}})
-                                                      body (json/parse-string (:body resp))
-                                                      parsed-chunk (into {} (keep (fn [bibkey]
-                                                                                    (when-let [book-info (get body bibkey)]
-                                                                                      (let [clean-isbn (str/replace bibkey #"ISBN:" "")
-                                                                                            authors (get book-info "authors")
-                                                                                            author-names (map #(get % "name") authors)
-                                                                                            author (if (seq author-names) (str/join ", " author-names) "Unknown Author")
-                                                                                            title (get book-info "title")
-                                                                                            pub-date (get book-info "publish_date")
-                                                                                            year (and pub-date (re-find #"\d{4}" pub-date))
-                                                                                            subjects (get book-info "subjects")
-                                                                                            genre (if (seq subjects)
-                                                                                                    (or (get (first subjects) "name") "General Study")
-                                                                                                    "General Study")
-                                                                                            meta {:author (or (and (not (str/blank? author)) author) "Unknown Author")
-                                                                                                  :title (or title "Unknown Title")
-                                                                                                  :year (if year (Integer/parseInt year) nil)
-                                                                                                  :genre genre
-                                                                                                  :isbn clean-isbn
-                                                                                                  :confidence 100
-                                                                                                  :notes "Matched from Batch Open Library Books API using Babashka."}]
-                                                                                        [clean-isbn meta])))
-                                                                                  chunk))]
-                                                  (write-log! (str "✅ [Batch Engine] Successfully resolved " (count parsed-chunk) " books in this block."))
-                                                  (Thread/sleep 1000)
-                                                  (merge acc-cache parsed-chunk))
-                                                (catch Exception e
-                                                  (write-log! (str "❌ [Batch Engine] Block fetch failed: " (.getMessage e)))
-                                                  acc-cache))))
-                                          existing-cache
-                                          chunks)
-                    new-state (assoc state :batch_isbn_cache batch-results)]
-                (save-state! new-state)
-                new-state))))))))
+              (write-log! (str "📦 [Batch Engine] Analyzing file chunk " chunk-idx " of " total-chunks " (" (count chunk-files) " files)..."))
+              (let [path-isbn-pairs (keep (fn [file]
+                                            (let [path (.getAbsolutePath file)
+                                                  filename (.getName file)
+                                                  ;; Detect ISBN (tries filename first, then text/OCR extraction)
+                                                  isbn (or (extract-valid-isbn filename)
+                                                           (let [res (extract-book-text-with-status path)]
+                                                             (extract-valid-isbn (:text res))))]
+                                              (when (and isbn (not (str/blank? isbn)))
+                                                [path isbn])))
+                                          chunk-files)
+                    unique-isbns (distinct (map second path-isbn-pairs))
+                    existing-cache (or (:batch_isbn_cache current-state) {})
+                    ;; Only fetch ISBNs not already resolved in cache
+                    isbns-to-fetch (filter (fn [isbn]
+                                             (let [clean (str/replace isbn #"\D" "")]
+                                               (not (or (contains? existing-cache (keyword clean))
+                                                        (contains? existing-cache clean)))))
+                                           unique-isbns)]
+                (if (empty? isbns-to-fetch)
+                  (do
+                    (write-log! (str "📦 [Batch Engine] Chunk " chunk-idx " of " total-chunks " - all detected ISBNs already in cache."))
+                    (recur (rest remaining-chunks) current-state (inc chunk-idx)))
+                  (do
+                    (write-log! (str "📡 [Batch Engine] Chunk " chunk-idx " of " total-chunks " - Querying Open Library batch API for " (count isbns-to-fetch) " unresolved ISBNs: " (str/join ", " isbns-to-fetch)))
+                    (let [bibkeys (str/join "," (map #(str "ISBN:" (str/replace % #"\D" "")) isbns-to-fetch))
+                          url (str "https://openlibrary.org/api/books?bibkeys=" bibkeys "&format=json&jscmd=data")
+                          next-state 
+                          (try
+                            (let [resp (http/get url {:headers {"User-Agent" "Librarian-Babashka/1.0"}})
+                                  body (json/parse-string (:body resp))
+                                  parsed-chunk (into {} (keep (fn [isbn]
+                                                                (let [bibkey (str "ISBN:" (str/replace isbn #"\D" ""))]
+                                                                  (when-let [book-info (get body bibkey)]
+                                                                    (let [clean-isbn (str/replace bibkey #"ISBN:" "")
+                                                                          authors (get book-info "authors")
+                                                                          author-names (map #(get % "name") authors)
+                                                                          author (if (seq author-names) (str/join ", " author-names) "Unknown Author")
+                                                                          title (get book-info "title")
+                                                                          pub-date (get book-info "publish_date")
+                                                                          year (and pub-date (re-find #"\d{4}" pub-date))
+                                                                          subjects (get book-info "subjects")
+                                                                          genre (if (seq subjects)
+                                                                                  (or (get (first subjects) "name") "General Study")
+                                                                                  "General Study")
+                                                                          meta {:author (or (and (not (str/blank? author)) author) "Unknown Author")
+                                                                                :title (or title "Unknown Title")
+                                                                                :year (if year (Integer/parseInt year) nil)
+                                                                                :genre genre
+                                                                                :isbn clean-isbn
+                                                                                :confidence 100
+                                                                                :notes "Matched from Batch Open Library Books API using Babashka."}]
+                                                                      [clean-isbn meta]))))
+                                                              isbns-to-fetch))
+                                  updated-cache (merge existing-cache parsed-chunk)
+                                  new-s (assoc current-state :batch_isbn_cache updated-cache)]
+                              (write-log! (str "✅ [Batch Engine] Chunk " chunk-idx " successfully resolved " (count parsed-chunk) " books."))
+                              (save-state! new-s)
+                              new-s)
+                            (catch Exception e
+                              (write-log! (str "❌ [Batch Engine] Chunk " chunk-idx " Open Library fetch failed: " (.getMessage e)))
+                              current-state))]
+                      ;; Wait 1.5 seconds between batches to avoid Open Library rate limits
+                      (Thread/sleep 1500)
+                      (recur (rest remaining-chunks) next-state (inc chunk-idx)))))))
+            current-state))))))
 
 (defn -main [& args]
   (println "================================================")
