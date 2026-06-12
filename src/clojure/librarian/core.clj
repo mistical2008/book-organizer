@@ -455,7 +455,8 @@
                      (and (str/starts-with? name base-name)
                           (or (str/ends-with? (str/lower-case name) ".png")
                               (str/ends-with? (str/lower-case name) ".tiff")
-                              (str/ends-with? (str/lower-case name) ".tif"))))))
+                              (str/ends-with? (str/lower-case name) ".tif")
+                              (str/ends-with? (str/lower-case name) ".pnm"))))))
          (sort-by #(.getName %)))))
 
 (defn ocr-single-image [img-path]
@@ -524,7 +525,7 @@
     (let [ddjvu (or (find-valid-ddjvu) "ddjvu")
           temp-prefix (str file-path "-page")
           _ (write-log! (str "📝 [Librarian] Rendering DjVu pages to temporary images with: " ddjvu))
-          res (sh ddjvu "-format=tiff" "-page=1-10" file-path (str temp-prefix "-%d.tiff"))]
+          res (sh ddjvu "-format=pnm" "-page=1-10" file-path (str temp-prefix "-%d.pnm"))]
       (if (zero? (:exit res))
         (let [files (find-generated-page-files temp-prefix)
               texts (doall (map (fn [f]
@@ -545,10 +546,17 @@
       (write-log! (str "⚠️ [Librarian OCR] DjVu page rendering crashed: " (.getMessage e)))
       "")))
 
-(defn query-book-metadata [isbn]
-  (let [clean-isbn (str/replace isbn #"\D" "")]
-    (or (query-google-books clean-isbn)
-        (query-open-library clean-isbn))))
+(defn query-book-metadata
+  ([isbn]
+   (query-book-metadata isbn nil))
+  ([isbn state]
+   (let [clean-isbn (str/replace isbn #"\D" "")
+         state-resolved (or state (load-state))
+         cache (or (:batch_isbn_cache state-resolved) {})]
+     (or (get cache (keyword clean-isbn))
+         (get cache clean-isbn)
+         (query-google-books clean-isbn)
+         (query-open-library clean-isbn)))))
 
 (defn run-ocr [file-path]
   (try
@@ -764,57 +772,63 @@
       (println "⚠️ PDF text extraction failed: " (.getMessage e))
       "")))
 
+(defonce book-text-cache (atom {}))
+
 (defn extract-book-text-with-status [file-path]
-  (let [filename (.getName (io/file file-path))
-        ext (str/lower-case (some-> (re-find #"\.([^.]+)$" filename) second))]
-    (cond
-      (or (= ext "epub") (= ext "fb2"))
-      {:text (if (= ext "epub") (extract-epub-text file-path) (extract-fb2-text file-path))
-       :ocr-status "not_required"}
+  (if-let [cached (get @book-text-cache file-path)]
+    cached
+    (let [res (let [filename (.getName (io/file file-path))
+                    ext (str/lower-case (some-> (re-find #"\.([^.]+)$" filename) second))]
+                (cond
+                  (or (= ext "epub") (= ext "fb2"))
+                  {:text (if (= ext "epub") (extract-epub-text file-path) (extract-fb2-text file-path))
+                   :ocr-status "not_required"}
 
-      (= ext "pdf")
-      (let [extracted (extract-pdf-text file-path)]
-        (if (and (not (str/blank? extracted)) (> (count (str/trim extracted)) 50))
-          (do
-            (write-log! (str "ℹ️ Digital PDF detected: '" filename "'. Using raw text extraction (Native)."))
-            {:text extracted :ocr-status "not_required"})
-          (do
-            (write-log! (str "ℹ️ Scanned PDF detected or empty native text: '" filename "'. Falling back to local OCR scanning."))
-            (let [ocr-res (ocr-pdf-pages file-path)]
-              (if (and (not (str/blank? ocr-res)) (> (count (str/trim ocr-res)) 10))
-                (do
-                  (write-log! (str "✅ Local OCR reading succeeded on PDF: '" filename "'."))
-                  {:text ocr-res :ocr-status "success"})
-                (do
-                  (write-log! (str "❌ Local OCR reading FAILED on PDF: '" filename "'."))
-                  {:text ocr-res :ocr-status "failed"}))))))
+                  (= ext "pdf")
+                  (let [extracted (extract-pdf-text file-path)]
+                    (if (and (not (str/blank? extracted)) (> (count (str/trim extracted)) 50))
+                      (do
+                        (write-log! (str "ℹ️ Digital PDF detected: '" filename "'. Using raw text extraction (Native)."))
+                        {:text extracted :ocr-status "not_required"})
+                      (do
+                        (write-log! (str "ℹ️ Scanned PDF detected or empty native text: '" filename "'. Falling back to local OCR scanning."))
+                        (let [ocr-res (ocr-pdf-pages file-path)]
+                          (if (and (not (str/blank? ocr-res)) (> (count (str/trim ocr-res)) 10))
+                            (do
+                              (write-log! (str "✅ Local OCR reading succeeded on PDF: '" filename "'."))
+                              {:text ocr-res :ocr-status "success"})
+                            (do
+                              (write-log! (str "❌ Local OCR reading FAILED on PDF: '" filename "'."))
+                              {:text ocr-res :ocr-status "failed"}))))))
 
-      (= ext "djvu")
-      (let [extracted (extract-djvu-text file-path)]
-        (if (and (not (str/blank? extracted)) (> (count (str/trim extracted)) 50))
-          (do
-            (write-log! (str "ℹ️ Digital DJVU detected: '" filename "'. Using raw text extraction (Native)."))
-            {:text extracted :ocr-status "not_required"})
-          (do
-            (write-log! (str "ℹ️ Scanned DJVU detected or empty native text: '" filename "'. Falling back to local ddjvu OCR scanning."))
-            (let [ocr-res (ocr-djvu-pages file-path)]
-              (if (and (not (str/blank? ocr-res)) (> (count (str/trim ocr-res)) 10))
-                (do
-                  (write-log! (str "✅ Local OCR reading succeeded on DJVU: '" filename "'."))
-                  {:text ocr-res :ocr-status "success"})
-                (do
-                  (write-log! (str "❌ Local OCR reading FAILED on DJVU: '" filename "'."))
-                  {:text ocr-res :ocr-status "failed"}))))))
+                  (= ext "djvu")
+                  (let [extracted (extract-djvu-text file-path)]
+                    (if (and (not (str/blank? extracted)) (> (count (str/trim extracted)) 50))
+                      (do
+                        (write-log! (str "ℹ️ Digital DJVU detected: '" filename "'. Using raw text extraction (Native)."))
+                        {:text extracted :ocr-status "not_required"})
+                      (do
+                        (write-log! (str "ℹ️ Scanned DJVU detected or empty native text: '" filename "'. Falling back to local ddjvu OCR scanning."))
+                        (let [ocr-res (ocr-djvu-pages file-path)]
+                          (if (and (not (str/blank? ocr-res)) (> (count (str/trim ocr-res)) 10))
+                            (do
+                              (write-log! (str "✅ Local OCR reading succeeded on DJVU: '" filename "'."))
+                              {:text ocr-res :ocr-status "success"})
+                            (do
+                              (write-log! (str "❌ Local OCR reading FAILED on DJVU: '" filename "'."))
+                              {:text ocr-res :ocr-status "failed"}))))))
 
-      :else
-      (let [ocr-res (run-ocr file-path)]
-        (if (and (not (str/blank? ocr-res)) (> (count (str/trim ocr-res)) 10))
-          (do
-            (write-log! (str "✅ Local OCR reading succeeded on default parser file: '" filename "'."))
-            {:text ocr-res :ocr-status "success"})
-          (do
-            (write-log! (str "❌ Local OCR reading FAILED on default parser file: '" filename "'."))
-            {:text ocr-res :ocr-status "failed"}))))))
+                  :else
+                  (let [ocr-res (run-ocr file-path)]
+                    (if (and (not (str/blank? ocr-res)) (> (count (str/trim ocr-res)) 10))
+                      (do
+                        (write-log! (str "✅ Local OCR reading succeeded on default parser file: '" filename "'."))
+                        {:text ocr-res :ocr-status "success"})
+                      (do
+                        (write-log! (str "❌ Local OCR reading FAILED on default parser file: '" filename "'."))
+                        {:text ocr-res :ocr-status "failed"})))))]
+      (swap! book-text-cache assoc file-path res)
+      res)))
 
 (defn extract-book-text [file-path]
   (:text (extract-book-text-with-status file-path)))
@@ -1000,6 +1014,88 @@
      :ai_categorization new-ai-cat
      :file_organization new-file-org}))
 
+(defn pre-process-and-batch-isbn-lookups! [files config state]
+  (let [enable-caching? (not= (:enableCaching config) false)
+        ;; 1. Filter out files that are already completed/scanned
+        unprocessed-files (filter (fn [file]
+                                    (let [path (.getAbsolutePath file)
+                                          status (get-cached-status state path)]
+                                      (not (and enable-caching? 
+                                                (or (= status "completed") 
+                                                    (= status "failed") 
+                                                    (= status "low_confidence"))))))
+                                  files)]
+    (if (empty? unprocessed-files)
+      state
+      (do
+        (write-log! (str "📦 [Batch Engine] Pre-scanning " (count unprocessed-files) " files for ISBN detection..."))
+        (let [path-isbn-pairs (keep (fn [file]
+                                      (let [path (.getAbsolutePath file)
+                                            filename (.getName file)
+                                            ;; Detect ISBN (tries filename first, then text/OCR extraction)
+                                            isbn (or (extract-valid-isbn filename)
+                                                     (let [res (extract-book-text-with-status path)]
+                                                       (extract-valid-isbn (:text res))))]
+                                        (when (and isbn (not (str/blank? isbn)))
+                                          [path isbn])))
+                                    unprocessed-files)
+              unique-isbns (distinct (map second path-isbn-pairs))
+              existing-cache (or (:batch_isbn_cache state) {})
+              ;; Only fetch ISBNs not already resolved in cache
+              isbns-to-fetch (filter (fn [isbn]
+                                       (let [clean (str/replace isbn #"\D" "")]
+                                         (not (or (contains? existing-cache (keyword clean))
+                                                  (contains? existing-cache clean)))))
+                                     unique-isbns)]
+          (if (empty? isbns-to-fetch)
+            (do
+              (write-log! "📦 [Batch Engine] All detected ISBNs are already present in cache.")
+              state)
+            (do
+              (write-log! (str "📡 [Batch Engine] Querying Open Library batch API for " (count isbns-to-fetch) " unresolved ISBNs: " (str/join ", " isbns-to-fetch)))
+              ;; Open Library API supports requesting up to ~15-20 bibkeys at once. We chunk them into groups of 15.
+              (let [chunks (partition-all 15 isbns-to-fetch)
+                    batch-results (reduce (fn [acc-cache chunk]
+                                            (let [bibkeys (str/join "," (map #(str "ISBN:" (str/replace % #"\D" "")) chunk))
+                                                  url (str "https://openlibrary.org/api/books?bibkeys=" bibkeys "&format=json&jscmd=data")]
+                                              (try
+                                                (write-log! (str "📡 [Batch Engine] Fetching block url: " url))
+                                                (let [resp (http/get url {:headers {"User-Agent" "Librarian-Babashka/1.0"}})
+                                                      body (json/parse-string (:body resp))
+                                                      parsed-chunk (into {} (keep (fn [bibkey]
+                                                                                    (when-let [book-info (get body bibkey)]
+                                                                                      (let [clean-isbn (str/replace bibkey #"ISBN:" "")
+                                                                                            authors (get book-info "authors")
+                                                                                            author-names (map #(get % "name") authors)
+                                                                                            author (if (seq author-names) (str/join ", " author-names) "Unknown Author")
+                                                                                            title (get book-info "title")
+                                                                                            pub-date (get book-info "publish_date")
+                                                                                            year (and pub-date (re-find #"\d{4}" pub-date))
+                                                                                            subjects (get book-info "subjects")
+                                                                                            genre (if (seq subjects)
+                                                                                                    (or (get (first subjects) "name") "General Study")
+                                                                                                    "General Study")
+                                                                                            meta {:author (or (and (not (str/blank? author)) author) "Unknown Author")
+                                                                                                  :title (or title "Unknown Title")
+                                                                                                  :year (if year (Integer/parseInt year) nil)
+                                                                                                  :genre genre
+                                                                                                  :isbn clean-isbn
+                                                                                                  :confidence 100
+                                                                                                  :notes "Matched from Batch Open Library Books API using Babashka."}]
+                                                                                        [clean-isbn meta])))
+                                                                                  chunk))]
+                                                  (write-log! (str "✅ [Batch Engine] Successfully resolved " (count parsed-chunk) " books in this block."))
+                                                  (Thread/sleep 1000)
+                                                  (merge acc-cache parsed-chunk))
+                                                (catch Exception e
+                                                  (write-log! (str "❌ [Batch Engine] Block fetch failed: " (.getMessage e)))
+                                                  acc-cache))))
+                                          existing-cache
+                                          chunks)
+                    new-state (assoc state :batch_isbn_cache batch-results)]
+                (save-state! new-state)
+                new-state))))))))
+
 (defn -main [& args]
   (println "================================================")
   (println "🤖 Librarian Clojure Babashka Daemon Live")
@@ -1023,22 +1119,28 @@
                      ". First 3 files: " (if (empty? first-three-names) "None" (str/join ", " first-three-names))))
     (when-not (tesseract-available?)
       (write-log! "⚠️ [Librarian System] 'tesseract' CLI utility is not present. Local OCR text extraction from document scans is fallback-disabled. Filenames and Gemini-based mapping will be prioritized."))
-    (let [final-state
+    (let [pre-batched-state (pre-process-and-batch-isbn-lookups! files config state)
+          final-state
           (loop [remaining-files files
-                 current-state state
+                 current-state pre-batched-state
                  skipped-count 0]
             (if-let [file (first remaining-files)]
               (let [path (.getAbsolutePath file)
                     cached-status (get-cached-status current-state path)]
                 (if (and enable-caching? (and cached-status (or (= cached-status "completed") (= cached-status "failed") (= cached-status "low_confidence"))))
                   (recur (rest remaining-files) current-state (inc skipped-count))
-                  (let [res (try
+                  (let [_ (write-log! (str "📖 [Librarian] Processing single file: " (.getName file)))
+                        res (try
                               (process-book path config)
                               (catch Exception e
                                 (write-log! (str "❌ Manual book scan failed: " (.getAbsolutePath file) " (" (.getMessage e) ")"))
                                 {:status "failed" :ocr-status "failed" :reason (.getMessage e)}))
                         new-state (update-state-with-result current-state path res)]
                      (save-state! new-state)
+                     ;; Pace delay of 2.5 seconds to cool down between files and prevent rate-limits
+                     (when (seq (rest remaining-files))
+                       (write-log! "⏱️ [Librarian] Cooling down for 2.5 seconds to respect system API limits...")
+                       (Thread/sleep 2500))
                      (recur (rest remaining-files) new-state skipped-count))))
               (do
                 (when (> skipped-count 0)

@@ -114,18 +114,23 @@
         first-three-names (map #(.getName %) (take 3 files))]
     (write-log! (str "🚚 [Organizer] Initializing sorting executions on input files. Total files detected to sort: " files-count
                      ". First files queue: " (str/join ", " first-three-names)))
-    (doseq [file files]
-      (let [path (.getAbsolutePath file)]
-        (let [cached-status (core/get-cached-status state path)]
-          (if (and enable-caching? (and cached-status (or (= cached-status "completed") (= cached-status "failed") (= cached-status "low_confidence"))))
-            (println "⏭️ Skipping cached file match:" path)
-            (try
-              (let [res (organize-single-file! path config state)
-                    new-state (core/update-state-with-result state path res)]
-                (core/save-state! new-state))
-              (catch Exception e
-                (write-log! (str "⚠️ [Organizer] Failed to organize '" (.getName file) "': " (.getMessage e)))))))))
-    (write-log! "✅ [Organizer] Files successfully categorized, written and resolved.")))
+    (let [pre-batched-state (core/pre-process-and-batch-isbn-lookups! files config state)]
+      (doseq [file files]
+        (let [path (.getAbsolutePath file)]
+          (let [cached-status (core/get-cached-status pre-batched-state path)]
+            (if (and enable-caching? (and cached-status (or (= cached-status "completed") (= cached-status "failed") (= cached-status "low_confidence"))))
+              (println "⏭️ Skipping cached file match:" path)
+              (try
+                (let [res (organize-single-file! path config pre-batched-state)
+                      new-state (core/update-state-with-result pre-batched-state path res)]
+                  (core/save-state! new-state)
+                  ;; Pace delay of 2.5 seconds to cool down between files and prevent rate-limits
+                  (when-not (= file (last files))
+                    (write-log! "⏱️ [Organizer] Cooling down for 2.5 seconds to respect system API limits...")
+                    (Thread/sleep 2500)))
+                (catch Exception e
+                  (write-log! (str "⚠️ [Organizer] Failed to organize '" (.getName file) "': " (.getMessage e)))))))))
+      (write-log! "✅ [Organizer] Files successfully categorized, written and resolved."))))
 
 (defn -main [& args]
   (println "================================================")
