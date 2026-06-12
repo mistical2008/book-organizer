@@ -456,15 +456,38 @@
                           (or (str/ends-with? (str/lower-case name) ".png")
                               (str/ends-with? (str/lower-case name) ".tiff")
                               (str/ends-with? (str/lower-case name) ".tif")
-                              (str/ends-with? (str/lower-case name) ".pnm"))))))
+                              (str/ends-with? (str/lower-case name) ".pnm")
+                              (str/ends-with? (str/lower-case name) ".ppm")
+                              (str/ends-with? (str/lower-case name) ".pgm")
+                              (str/ends-with? (str/lower-case name) ".pbm"))))))
          (sort-by #(.getName %)))))
+
+(defn get-supported-ocr-langs [bin]
+  (try
+    (let [res (sh bin "--list-langs")]
+      (if (zero? (:exit res))
+        (let [lines (str/split-lines (:out res))
+              available (->> lines
+                             (map str/trim)
+                             (filter #(re-matches #"[a-zA-Z_]+" %))
+                             set)
+              target-langs ["eng" "ukr" "srp" "srp_latn"]
+              supported (filter available target-langs)]
+          (if (seq supported)
+            (str/join "+" supported)
+            "eng"))
+        "eng"))
+    (catch Exception _
+      "eng")))
 
 (defn ocr-single-image [img-path]
   (try
     (let [bin (or (find-valid-tesseract) "tesseract")]
       (println "📝 [Librarian] OCR page image (" bin "): " img-path)
       (let [output-base (str img-path "-tmp-txt")
-            result (sh bin img-path output-base "-l" "eng+ukr+srp+srp_latn")]
+            langs (get-supported-ocr-langs bin)
+            _ (println "📝 [Librarian OCR] Running Tesseract with supported languages:" langs)
+            result (sh bin img-path output-base "-l" langs)]
         (if (zero? (:exit result))
           (let [txt-file (io/file (str output-base ".txt"))
                 txt-content (if (.exists txt-file) (slurp txt-file) "")]
@@ -525,7 +548,26 @@
     (let [ddjvu (or (find-valid-ddjvu) "ddjvu")
           temp-prefix (str file-path "-page")
           _ (write-log! (str "📝 [Librarian] Rendering DjVu pages to temporary images with: " ddjvu))
-          res (sh ddjvu "-format=pnm" "-page=1-10" file-path (str temp-prefix "-%d.pnm"))]
+          ;; Try TIFF first (Tesseract's native and highly preferred format)
+          res-tiff (sh ddjvu "-format=tiff" "-page=1-10" file-path (str temp-prefix "-%d.tiff"))
+          res (if (zero? (:exit res-tiff))
+                {:exit 0 :ext "tiff"}
+                (do
+                  (write-log! "⚠️ [Librarian OCR] ddjvu TIFF rendering failed or not supported. Trying PPM format...")
+                  (let [res-ppm (sh ddjvu "-format=ppm" "-page=1-10" file-path (str temp-prefix "-%d.ppm"))]
+                    (if (zero? (:exit res-ppm))
+                      {:exit 0 :ext "ppm"}
+                      (do
+                        (write-log! "⚠️ [Librarian OCR] ddjvu PPM rendering failed. Trying PBM format...")
+                        (let [res-pbm (sh ddjvu "-format=pbm" "-page=1-10" file-path (str temp-prefix "-%d.pbm"))]
+                          (if (zero? (:exit res-pbm))
+                            {:exit 0 :ext "pbm"}
+                            (do
+                              (write-log! "⚠️ [Librarian OCR] ddjvu PBM rendering failed. Trying PGM format...")
+                              (let [res-pgm (sh ddjvu "-format=pgm" "-page=1-10" file-path (str temp-prefix "-%d.pgm"))]
+                                (if (zero? (:exit res-pgm))
+                                  {:exit 0 :ext "pgm"}
+                                  {:exit (:exit res-pgm) :err (:err res-pgm)}))))))))))]
       (if (zero? (:exit res))
         (let [files (find-generated-page-files temp-prefix)
               texts (doall (map (fn [f]
@@ -540,7 +582,7 @@
                 "")
               all-text)))
         (do
-          (write-log! (str "⚠️ [Librarian OCR] ddjvu execution failed with exit code: " (:exit res) " Error: " (:err res)))
+          (write-log! (str "⚠️ [Librarian OCR] ddjvu execution failed or no formats worked. Error: " (:err res)))
           "")))
     (catch Exception e
       (write-log! (str "⚠️ [Librarian OCR] DjVu page rendering crashed: " (.getMessage e)))
