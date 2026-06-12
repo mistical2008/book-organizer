@@ -29,7 +29,7 @@ pkgs.mkShell {
 
     # System Utilities for OCR
     tesseract-custom
-    pkgs.poppler_utils
+    pkgs.poppler-utils
     pkgs.djvulibre
   ];
 

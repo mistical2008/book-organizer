@@ -107,7 +107,7 @@ pkgs.mkShell {
     tesseract
     tesseract-ocr-eng
     tesseract-ocr-ukr
-    poppler_utils
+    poppler-utils
     djvulibre
     python311
     python311Packages.pytesseract

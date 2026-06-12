@@ -84,7 +84,7 @@
             mkdir -p $out/bin
             cat > $out/bin/librarian-web <<EOF
 #!/bin/sh
-export PATH="${tesseract-custom}/bin:${pkgs.poppler_utils}/bin:${pkgs.djvulibre}/bin:\$PATH"
+export PATH="${tesseract-custom}/bin:${pkgs.poppler-utils}/bin:${pkgs.djvulibre}/bin:\$PATH"
 export TESSDATA_PREFIX="${tesseract-custom}/share/tessdata"
 exec ${pkgs.babashka}/bin/bb --classpath $out/lib/node_modules/librarian/src/clojure:$out/lib/node_modules/librarian/src/cljs -m librarian.server "\$@"
 EOF
@@ -105,7 +105,7 @@ EOF
             pkgs.nodejs
             pkgs.nodePackages.npm
             tesseract-custom
-            pkgs.poppler_utils
+            pkgs.poppler-utils
             pkgs.djvulibre
 
             (pkgs.python3.withPackages (ps: with ps; [
@@ -181,7 +181,7 @@ EOF
                 description = "Librarian Interactive Portal & Integrated Background Sync Daemon";
                 after = [ "network.target" ];
                 wantedBy = [ "multi-user.target" ];
-                path = [ tessdata-fast pkgs.poppler_utils pkgs.djvulibre ];
+                path = [ tessdata-fast pkgs.poppler-utils pkgs.djvulibre ];
 
                 serviceConfig = {
                   Type = "simple";
