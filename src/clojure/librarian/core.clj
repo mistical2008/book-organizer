@@ -731,6 +731,26 @@
 (defn extract-book-text [file-path]
   (:text (extract-book-text-with-status file-path)))
 
+(defn chown-to-logged-user! [path]
+  (let [config (load-config)
+        config-user (:userName config)
+        detected-user (get-current-os-user)
+        user (if (and (not (str/blank? config-user)) (not= config-user "root"))
+               config-user
+               detected-user)]
+    (when (and (not (str/blank? user)) (not= user "root"))
+      (try
+        (let [path-str (if (instance? java.io.File path) (.getAbsolutePath path) (str path))
+              res (sh "chown" "-R" (str user ":" user) path-str)]
+          (if (= 0 (:exit res))
+            (write-log! (str "🔑 [Librarian Permission] Successfully changed ownership of " path-str " to " user ":" user))
+            (let [res2 (sh "chown" "-R" user path-str)]
+              (if (= 0 (:exit res2))
+                (write-log! (str "🔑 [Librarian Permission] Successfully changed ownership of " path-str " to " user))
+                (write-log! (str "⚠️ [Librarian Permission] Failed to chown " path-str " to " user ": " (:err res2)))))))
+        (catch Exception e
+          (write-log! (str "⚠️ [Librarian Permission] Error changing ownership on " path ": " (.getMessage e))))))))
+
 (defn process-book [file-path config]
   (let [filename (.getName (io/file file-path))
         _ (write-log! (str "📖 [Librarian] Processing publication: " filename))
@@ -785,11 +805,23 @@
             ;; Build category folder path
             category-folder (str/join "/" (concat [resolved-out-dir] sub-dirs [file-folder]))
             ext (or (re-find #"\.[a-zA-Z0-9]+$" file-path) ".pdf")
-            final-dest (str category-folder "/" (sanitize file-base-name) ext)]
+            final-dest (str category-folder "/" (sanitize file-base-name) ext)
+            
+            ;; Determine first new directory prior to actual creation for ownership adjustment
+            all-path-levels (reductions (fn [acc segment] (.getAbsolutePath (io/file acc segment)))
+                                        resolved-out-dir
+                                        (concat sub-dirs [file-folder]))
+            first-new-dir (first (filter #(not (.exists (io/file %))) all-path-levels))]
         (write-log! (str "✅ [Librarian] Successfully classified '" filename "' -> '" dest-name "' (Confidence: " (:confidence metadata) "%)"))
         (println "🚚 Relocating to: " final-dest)
         (io/make-parents final-dest)
         (io/copy (io/file file-path) (io/file final-dest))
+        
+        ;; Change ownership to the resolved logged-in user
+        (when first-new-dir
+          (chown-to-logged-user! first-new-dir))
+        (chown-to-logged-user! final-dest)
+        
         (when auto-cleanup?
           (io/delete-file (io/file file-path) true))
         {:status "completed" :meta metadata :destination final-dest :ocr ocr-text :ocr-status ocr-status})
