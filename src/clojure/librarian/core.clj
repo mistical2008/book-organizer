@@ -564,6 +564,34 @@
       (println "⚠️ OCR execution failed (tesseract probably missing):" (.getMessage e))
       "")))
 
+(defn parse-safe-int [v default-val]
+  (cond
+    (nil? v) default-val
+    (number? v) (int v)
+    (string? v) (try
+                  (if-let [first-num (re-find #"\d+" v)]
+                    (Integer/parseInt first-num)
+                    default-val)
+                  (catch Exception _ default-val))
+    :else default-val))
+
+(defn extract-json-string [s]
+  (if (str/blank? s)
+    ""
+    (if-let [json-match (re-find #"(?s)\{.*\}" s)]
+      json-match
+      s)))
+
+(defn normalize-metadata [meta]
+  (when meta
+    (let [raw-conf (:confidence meta)
+          rec-conf (parse-safe-int raw-conf 0)
+          raw-year (:year meta)
+          rec-year (parse-safe-int raw-year nil)]
+      (assoc meta
+             :confidence rec-conf
+             :year (if (and rec-year (> rec-year 0)) rec-year nil)))))
+
 (defn extract-via-gemini [text filename gemini-model]
   (let [config (load-config)
         api-key (or (:geminiApiKey config) (System/getenv "GEMINI_API_KEY"))]
@@ -571,15 +599,22 @@
       (throw (Exception. "GEMINI_API_KEY environment variable or settings configuration is required."))
       (let [url (str "https://generativelanguage.googleapis.com/v1beta/models/" (or gemini-model "gemini-3.5-flash") ":generateContent?key=" api-key)
             system-prompt "Act as the Librarian Library Metadata Agent. Extract: author, title, year, genre, isbn. Return JSON: {author, title, year, genre, isbn, confidence, notes}."
-            combined-text (str "Book Filename: " filename "\n\nExtracted content preview (OCR/Text):\n" (subs text 0 (min (count text) 4000)))
+            text-safe (or text "")
+            combined-text (str "Book Filename: " filename "\n\nExtracted content preview (OCR/Text):\n" (subs text-safe 0 (min (count text-safe) 4000)))
             payload {:contents [{:parts [{:text combined-text}]}]
                      :systemInstruction {:parts [{:text system-prompt}]}
                      :generationConfig {:responseMimeType "application/json"}}
             resp (http/post url {:headers {"Content-Type" "application/json"}
                                  :body (json/generate-string payload)})
-            body (json/parse-string (:body resp) true)
-            text-response (-> body :candidates first :content :parts first :text)]
-        (json/parse-string text-response true)))))
+            body (json/parse-string (:body resp) true)]
+        (if-let [err (:error body)]
+          (throw (Exception. (str "Gemini API Error: " (:message err))))
+          (let [text-response (-> body :candidates first :content :parts first :text)
+                _ (when (str/blank? text-response)
+                    (throw (Exception. "Gemini API returned an empty response.")))
+                cleaned-json (extract-json-string text-response)
+                parsed (json/parse-string cleaned-json true)]
+            (normalize-metadata parsed)))))))
 
 (defn sanitize [s]
   (if (nil? s)
@@ -592,7 +627,9 @@
 (defn compute-destination [meta template]
   (let [author (or (:author meta) "Unknown Author")
         title (or (:title meta) "Unknown Title")
-        year (if (and (:year meta) (> (int (:year meta)) 0)) (str (:year meta)) "Unknown Year")
+        year (let [y (:year meta)
+                   y-int (parse-safe-int y 0)]
+               (if (pos? y-int) (str y-int) "Unknown Year"))
         genre (or (:genre meta) "Uncategorized")
         isbn (or (:isbn meta) "No ISBN")
         interpolated (-> template
