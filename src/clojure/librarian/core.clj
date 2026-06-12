@@ -582,7 +582,12 @@
         (json/parse-string text-response true)))))
 
 (defn sanitize [s]
-  (str/replace (str/trim s) #"[/\\?%*:|\"<>\s]+" " "))
+  (if (nil? s)
+    ""
+    (let [cleaned (str/replace (str/trim s) #"[/\\?%*:|\"<>\s\n\r]+" " ")]
+      (if (> (count cleaned) 100)
+        (str (subs cleaned 0 100) "...")
+        cleaned))))
 
 (defn compute-destination [meta template]
   (let [author (or (:author meta) "Unknown Author")
@@ -767,22 +772,26 @@
                        (extract-valid-isbn filename))
         _ (when (and isbn-match (not (str/blank? isbn-match)))
             (write-log! (str "🔍 [Librarian] Detected ISBN '" isbn-match "' for publication '" filename "'")))
-        metadata (cond
-                   (and isbn-match (not (str/blank? isbn-match)))
-                   (query-book-metadata isbn-match)
+        metadata (let [api-meta (when (and isbn-match (not (str/blank? isbn-match)))
+                                  (query-book-metadata isbn-match))]
+                   (cond
+                     api-meta
+                     api-meta
 
-                   isbn-only?
-                   (do
-                     (write-log! (str "ℹ️ [Librarian] Skipping non-ISBN classification for '" filename "' (ISBN-only mode active)"))
-                     nil)
+                     isbn-only?
+                     (do
+                       (if (and isbn-match (not (str/blank? isbn-match)))
+                         (write-log! (str "⚠️ [Librarian] ISBN '" isbn-match "' detected for '" filename "' but API query produced no metadata. Skipping fallback as isbnOnlyRequests is active."))
+                         (write-log! (str "ℹ️ [Librarian] Skipping non-ISBN classification for '" filename "' (ISBN-only mode active)")))
+                       nil)
 
-                   :else
-                   (try
-                     (write-log! (str "🤖 [Librarian] No ISBN detected. Running Gemini AI classification for: " filename))
-                     (extract-via-gemini ocr-text filename gemini-model)
-                     (catch Exception e
-                       (write-log! (str "⚠️ [Librarian] Gemini AI classification failed for '" filename "': " (.getMessage e)))
-                       nil)))]
+                     :else
+                     (try
+                       (write-log! (str "🤖 [Librarian] Running Gemini AI classification fallback for: " filename))
+                       (extract-via-gemini ocr-text filename gemini-model)
+                       (catch Exception e
+                         (write-log! (str "⚠️ [Librarian] Gemini AI classification failed for '" filename "': " (.getMessage e)))
+                         nil))))]
     (if (and metadata (>= (or (:confidence metadata) 0) confidence-threshold))
       (let [dest-name (compute-destination metadata destination-template)
             ;; Split by slashes to find subdirectories defined inside the template
@@ -940,7 +949,11 @@
                     cached-status (get-cached-status current-state path)]
                 (if (and enable-caching? (and cached-status (or (= cached-status "completed") (= cached-status "failed") (= cached-status "low_confidence"))))
                   (recur (rest remaining-files) current-state (inc skipped-count))
-                  (let [res (process-book path config)
+                  (let [res (try
+                              (process-book path config)
+                              (catch Exception e
+                                (write-log! (str "❌ Manual book scan failed: " (.getAbsolutePath file) " (" (.getMessage e) ")"))
+                                {:status "failed" :ocr-status "failed" :reason (.getMessage e)}))
                         new-state (update-state-with-result current-state path res)]
                      (save-state! new-state)
                      (recur (rest remaining-files) new-state skipped-count))))

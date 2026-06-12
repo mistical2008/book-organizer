@@ -32,47 +32,64 @@
         ;; Use Core equations to find ISBN and metadata
         isbn-match (or (core/extract-valid-isbn ocr-text)
                        (core/extract-valid-isbn filename))
-        metadata (cond
-                   (and isbn-match (not (str/blank? isbn-match)))
-                   (core/query-book-metadata isbn-match)
+        metadata (let [api-meta (when (and isbn-match (not (str/blank? isbn-match)))
+                                  (core/query-book-metadata isbn-match))]
+                   (cond
+                     api-meta
+                     api-meta
 
-                   isbn-only?
-                   nil
+                     isbn-only?
+                     (do
+                       (if (and isbn-match (not (str/blank? isbn-match)))
+                         (println "⚠️ [Organizer] ISBN '" isbn-match "' detected for '" filename "' but API query produced no metadata. Skipping fallback as isbnOnlyRequests is active.")
+                         (println "ℹ️ [Organizer] Skipping non-ISBN classification for '" filename "' (ISBN-only mode active)"))
+                       nil)
 
-                   :else
-                   (try (core/extract-via-gemini ocr-text filename gemini-model)
-                        (catch Exception e
-                          (println "⚠️ Gemini extraction failure: " (.getMessage e))
-                          nil)))]
+                     :else
+                     (try (core/extract-via-gemini ocr-text filename gemini-model)
+                          (catch Exception e
+                            (println "⚠️ Gemini extraction failure: " (.getMessage e))
+                            nil))))]
                      
-    (if (and metadata (>= (or (:confidence metadata) 0) confidence-threshold))
-      (let [dest-name (core/compute-destination metadata destination-template)
-            raw-segments (str/split dest-name #"[/\\\\]+")
-            file-base-name (or (last raw-segments) "Untitled Book")
-            template-subdirs (filter #(not (str/blank? %)) (map core/sanitize (butlast raw-segments)))
-            
-            resolved-out-dir (core/resolve-path output-dir)
-            genre (or (:genre metadata) "Uncategorized")
-            sub-dirs (if (seq template-subdirs)
-                       template-subdirs
-                       [(core/sanitize genre)])
-            
-            ;; Each catalog folder has a subfolder centered at the book name
-            file-folder (core/sanitize file-base-name)
-            category-folder (str/join "/" (concat [resolved-out-dir] sub-dirs [file-folder]))
-            ext (or (re-find #"\.[a-zA-Z0-9]+$" file-path) ".pdf")
-            final-dest (str category-folder "/" (core/sanitize file-base-name) ext)]
-            
-        (println "✨ [Organizer] Metadata is highly validated. confidence=" (:confidence metadata))
-        (println "✨ [Organizer] Physical Relocations under construction ->" final-dest)
-        
-        ;; Perform actual physical filesystem mutations
-        (io/make-parents final-dest)
-        (io/copy (io/file file-path) (io/file final-dest))
-        
-        (when auto-cleanup?
-          (println "🗑️ [Organizer] Active Clean-up enabled. Purging source raw book:" file-path)
-          (io/delete-file (io/file file-path) true))
+     (if (and metadata (>= (or (:confidence metadata) 0) confidence-threshold))
+       (let [dest-name (core/compute-destination metadata destination-template)
+             raw-segments (str/split dest-name #"[/\\\\]+")
+             file-base-name (or (last raw-segments) "Untitled Book")
+             template-subdirs (filter #(not (str/blank? %)) (map core/sanitize (butlast raw-segments)))
+             
+             resolved-out-dir (core/resolve-path output-dir)
+             genre (or (:genre metadata) "Uncategorized")
+             sub-dirs (if (seq template-subdirs)
+                        template-subdirs
+                        [(core/sanitize genre)])
+             
+             ;; Each catalog folder has a subfolder centered at the book name
+             file-folder (core/sanitize file-base-name)
+             category-folder (str/join "/" (concat [resolved-out-dir] sub-dirs [file-folder]))
+             ext (or (re-find #"\.[a-zA-Z0-9]+$" file-path) ".pdf")
+             final-dest (str category-folder "/" (core/sanitize file-base-name) ext)
+             
+             ;; Determine first new directory prior to actual creation for ownership adjustment
+             all-path-levels (reductions (fn [acc segment] (.getAbsolutePath (io/file acc segment)))
+                                         resolved-out-dir
+                                         (concat sub-dirs [file-folder]))
+             first-new-dir (first (filter #(not (.exists (io/file %))) all-path-levels))]
+             
+         (println "✨ [Organizer] Metadata is highly validated. confidence=" (:confidence metadata))
+         (println "✨ [Organizer] Physical Relocations under construction ->" final-dest)
+         
+         ;; Perform actual physical filesystem mutations
+         (io/make-parents final-dest)
+         (io/copy (io/file file-path) (io/file final-dest))
+         
+         ;; Change ownership to the resolved logged-in user
+         (when first-new-dir
+           (core/chown-to-logged-user! first-new-dir))
+         (core/chown-to-logged-user! final-dest)
+         
+         (when auto-cleanup?
+           (println "🗑️ [Organizer] Active Clean-up enabled. Purging source raw book:" file-path)
+           (io/delete-file (io/file file-path) true))
           
         {:status "completed" :meta metadata :destination final-dest :ocr ocr-text})
         
@@ -102,9 +119,12 @@
         (let [cached-status (core/get-cached-status state path)]
           (if (and enable-caching? (and cached-status (or (= cached-status "completed") (= cached-status "failed") (= cached-status "low_confidence"))))
             (println "⏭️ Skipping cached file match:" path)
-            (let [res (organize-single-file! path config state)
-                  new-state (core/update-state-with-result state path res)]
-              (core/save-state! new-state))))))
+            (try
+              (let [res (organize-single-file! path config state)
+                    new-state (core/update-state-with-result state path res)]
+                (core/save-state! new-state))
+              (catch Exception e
+                (write-log! (str "⚠️ [Organizer] Failed to organize '" (.getName file) "': " (.getMessage e)))))))))
     (write-log! "✅ [Organizer] Files successfully categorized, written and resolved.")))
 
 (defn -main [& args]
