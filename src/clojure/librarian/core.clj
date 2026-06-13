@@ -254,6 +254,21 @@
     (spit logs-file (json/generate-string truncated-logs {:pretty true}))
     (println "[Librarian]" msg)))
 
+(defn check-pause-and-wait! []
+  (let [initial-paused? (:scanPaused (load-config))]
+    (when initial-paused?
+      (write-log! "⏸️ [Librarian] Scanning has been PAUSED. Waiting for resume..."))
+    (loop [was-paused? initial-paused?]
+      (let [paused? (:scanPaused (load-config))]
+        (if paused?
+          (do
+            (when-not was-paused?
+              (write-log! "⏸️ [Librarian] Scanning has been PAUSED. Waiting for resume..."))
+            (Thread/sleep 1500)
+            (recur true))
+          (when was-paused?
+            (write-log! "▶️ [Librarian] Scanning RESUMED.")))))))
+
 (defn isbn-10? [isbn]
   (let [clean (str/upper-case (str/replace isbn #"[^0-9X]" ""))]
     (if (= (count clean) 10)
@@ -1079,8 +1094,10 @@
                chunk-idx 1]
           (if-let [chunk-files (first remaining-chunks)]
             (do
+              (check-pause-and-wait!)
               (write-log! (str "📦 [Batch Engine] Analyzing file chunk " chunk-idx " of " total-chunks " (" (count chunk-files) " files)..."))
               (let [path-isbn-pairs (keep (fn [file]
+                                            (check-pause-and-wait!)
                                             (let [path (.getAbsolutePath file)
                                                   filename (.getName file)
                                                   ;; Detect ISBN (tries filename first, then text/OCR extraction)
@@ -1179,19 +1196,21 @@
                     cached-status (get-cached-status current-state path)]
                 (if (and enable-caching? (and cached-status (or (= cached-status "completed") (= cached-status "failed") (= cached-status "low_confidence"))))
                   (recur (rest remaining-files) current-state (inc skipped-count))
-                  (let [_ (write-log! (str "📖 [Librarian] Processing single file: " (.getName file)))
-                        res (try
-                              (process-book path config)
-                              (catch Exception e
-                                (write-log! (str "❌ Manual book scan failed: " (.getAbsolutePath file) " (" (.getMessage e) ")"))
-                                {:status "failed" :ocr-status "failed" :reason (.getMessage e)}))
-                        new-state (update-state-with-result current-state path res)]
-                     (save-state! new-state)
-                     ;; Pace delay of 2.5 seconds to cool down between files and prevent rate-limits
-                     (when (seq (rest remaining-files))
-                       (write-log! "⏱️ [Librarian] Cooling down for 2.5 seconds to respect system API limits...")
-                       (Thread/sleep 2500))
-                     (recur (rest remaining-files) new-state skipped-count))))
+                  (do
+                    (check-pause-and-wait!)
+                    (let [_ (write-log! (str "📖 [Librarian] Processing single file: " (.getName file)))
+                          res (try
+                                (process-book path config)
+                                (catch Exception e
+                                  (write-log! (str "❌ Manual book scan failed: " (.getAbsolutePath file) " (" (.getMessage e) ")"))
+                                  {:status "failed" :ocr-status "failed" :reason (.getMessage e)}))
+                          new-state (update-state-with-result current-state path res)]
+                       (save-state! new-state)
+                       ;; Pace delay of 2.5 seconds to cool down between files and prevent rate-limits
+                       (when (seq (rest remaining-files))
+                         (write-log! "⏱️ [Librarian] Cooling down for 2.5 seconds to respect system API limits...")
+                         (Thread/sleep 2500))
+                       (recur (rest remaining-files) new-state skipped-count)))))
               (do
                 (when (> skipped-count 0)
                   (write-log! (str "⏭️ [Librarian] Skipped " skipped-count " cached files (previously completed or low-confidence classified) to save API/system resources.")))
