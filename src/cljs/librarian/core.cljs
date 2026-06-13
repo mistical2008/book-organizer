@@ -29,20 +29,25 @@
 ;; =============================================================================
 ;; HTTP Actions & Effects
 ;; =============================================================================
-(defn fetch-config! []
-  (-> (js/fetch "/api/config")
-      (.then (fn [resp] (.json resp)))
-      (.then (fn [data]
-               (let [config data
-                     input-dirs (get config :inputDirs)
-                     dir-vec (cond
-                               (vector? input-dirs) input-dirs
-                               (js/Array.isArray input-dirs) (vec input-dirs)
-                               (string? input-dirs) (vec (map str/trim (str/split input-dirs #",")))
-                               :else ["/data/books_to_sort"])
-                     normalized-config (assoc config :inputDirs dir-vec)]
-                 (swap! app-state assoc :config normalized-config)
-                 (swap! app-state assoc :edit-config normalized-config))))))
+(defn fetch-config!
+  ([] (fetch-config! false))
+  ([force?]
+   (-> (js/fetch "/api/config")
+       (.then (fn [resp] (.json resp)))
+       (.then (fn [data]
+                (let [config data
+                      input-dirs (get config :inputDirs)
+                      dir-vec (cond
+                                (vector? input-dirs) input-dirs
+                                (js/Array.isArray input-dirs) (vec input-dirs)
+                                (string? input-dirs) (vec (map str/trim (str/split input-dirs #",")))
+                                :else ["/data/books_to_sort"])
+                      normalized-config (assoc config :inputDirs dir-vec)]
+                  (swap! app-state assoc :config normalized-config)
+                  (when (or force?
+                            (empty? (:edit-config @app-state))
+                            (= (:edit-config @app-state) (:config @app-state)))
+                    (swap! app-state assoc :edit-config normalized-config))))))))
 
 (defn fetch-state! []
   (-> (js/fetch "/api/state")
@@ -90,7 +95,7 @@
                        :body (js/JSON.stringify (clj->js updated-config))})
         (.then (fn [resp] (.json resp)))
         (.then (fn [data]
-                 (fetch-config!)
+                 (fetch-config! true)
                  (fetch-logs!))))))
 
 (defn clean-logs! [mode]
@@ -504,7 +509,7 @@
                :on-click (fn [] (toggle-scan-pause!))}
               [:span "⏸️ Pause Scan"]])])
          [:button.w-full.border.border-white-10.text-gray-300.px-4.py-2.5.rounded-lg.text-xs.font-medium.hover:bg-brand-soft.transition-colors
-          {:on-click #(do (fetch-state!) (fetch-logs!) (fetch-config!))}
+          {:on-click #(do (fetch-state!) (fetch-logs!) (fetch-config! true))}
           "Sync State"]]
           
         [:div.border-t.border-white-5.pt-4.space-y-3
@@ -888,7 +893,7 @@
                            (.then (fn [resp] (.json resp)))
                            (.then (fn [res]
                                     (swap! app-state assoc :save-success true)
-                                     (fetch-config!)))
+                                     (fetch-config! true)))
                             (.catch (fn [err] (js/console.error err))))))}
          "Save & Apply Daemon Settings"]]]]))
 
@@ -1377,13 +1382,13 @@
 ;; ClojureScript Reagent Bootstrapper
 ;; =============================================================================
 (defn ^:export init []
-  (fetch-config!)
+  (fetch-config! true)
   (fetch-state!)
   (fetch-logs!)
   ;; Background polling loops for active live system syncs
   (js/setInterval (fn []
                     (fetch-state!)
                     (fetch-logs!)
-                    (fetch-config!))
+                    (fetch-config! false))
                   5000)
   (rdom/render [main-layout] (.getElementById js/document "root")))
