@@ -793,6 +793,14 @@
            "📁"]]]
 
         [:div.space-y-2
+         [:label.block.text-xs.font-mono.text-gray-400.font-bold.uppercase.tracking-wider "Unorganized Folder Name"]
+         [:input.w-full.bg-black.border.border-white-10.p-2.rounded.text-xs.text-white.focus:border-brand-muted.focus:outline-none.font-mono
+          {:type "text"
+           :placeholder "Unknown"
+           :value (get edit-config :unknownFolderName "Unknown")
+           :onChange #(swap! app-state assoc-in [:edit-config :unknownFolderName] (.. % -target -value))}]]
+
+        [:div.space-y-2
          [:label.block.text-xs.font-mono.text-gray-400.font-bold.uppercase.tracking-wider "Gemini Fallback Model"]
          [:select.w-full.bg-black.border.border-white-10.p-2.5.rounded.text-xs.text-gray-300.focus:border-brand-muted.focus:outline-none.font-mono
           {:value (get edit-config :geminiModel "gemini-3.5-flash")
@@ -1044,14 +1052,22 @@
         db-search (or (:db-search @app-state) "")
         selected-record (:selected-record @app-state)
         raw-state (or (:raw-state @app-state) {})
-        raw-records (or (get raw-state active-db) #js [])
-        records (if (= active-db "scanned_books")
+        raw-records (cond
+                      (= active-db "unorganized_books") (or (get raw-state "scanned_books") #js [])
+                      :else (or (get raw-state active-db) #js []))
+        records (cond
+                  (= active-db "scanned_books")
                   (.filter raw-records (fn [rec] (not= (get rec "status") "completed")))
+
+                  (= active-db "unorganized_books")
+                  (.filter raw-records (fn [rec] (or (= (get rec "status") "low_confidence") (= (get rec "status") "failed"))))
+
+                  :else
                   raw-records)
         get-reconciled-val (fn [rec field-key]
                              (let [raw (get rec field-key)]
                                (cond
-                                 (and (= active-db "scanned_books")
+                                 (and (or (= active-db "scanned_books") (= active-db "unorganized_books"))
                                       (= field-key "isbn_detected")
                                       (or (nil? raw) (= raw "null") (= raw "None")))
                                  (let [filepath (or (get rec "filepath") (get rec :filepath))
@@ -1064,7 +1080,7 @@
                                          isbn))
                                      nil))
 
-                                 (and (= active-db "scanned_books")
+                                 (and (or (= active-db "scanned_books") (= active-db "unorganized_books"))
                                       (= field-key "reason")
                                       (or (nil? raw) (= raw "null") (= raw "None") (= raw "")))
                                  (let [status (get rec "status")
@@ -1088,6 +1104,12 @@
                                        ["status" "Status"]
                                        ["reason" "Not Processed Reason"]
                                        ["timestamp" "Timestamp"]]
+                      "unorganized_books" [["filepath" "File Path"]
+                                           ["filename" "Filename"]
+                                           ["isbn_detected" "Detected ISBN"]
+                                           ["status" "Status"]
+                                           ["reason" "De-facto Unorganized Warning"]
+                                           ["timestamp" "Timestamp"]]
                       "isbn_requests" [["filepath" "File Path"]
                                        ["isbn" "ISBN Query"]
                                        ["status" "Status"]
@@ -1117,15 +1139,24 @@
      [ocr-monitor-component]
 
      ;; Sub-tab selection menu
-     [:div.grid.grid-cols-2.md:grid-cols-4.gap-3
+     [:div.grid.grid-cols-2.lg:grid-cols-5.md:grid-cols-3.gap-3
       (for [[db-key label badge-color icon]
             [["scanned_books" "Scanned Publications" "bg-blue-500/10 text-blue-400" "📖"]
+             ["unorganized_books" "Unorganized Books" "bg-rose-500/10 text-rose-400" "⚠️"]
              ["isbn_requests" "ISBN Request Logs" "bg-amber-500/10 text-amber-400" "🔍"]
              ["ai_categorization" "AI Categorization" "bg-purple-500/10 text-purple-400" "🧠"]
              ["file_organization" "File Relocations" "bg-emerald-500/10 text-emerald-400" "📂"]]]
-        (let [raw-recs (or (get raw-state db-key) #js [])
-              count-val (if (= db-key "scanned_books")
+        (let [raw-recs (cond
+                          (= db-key "unorganized_books") (or (get raw-state "scanned_books") #js [])
+                          :else (or (get raw-state db-key) #js []))
+              count-val (cond
+                          (= db-key "scanned_books")
                           (.-length (.filter raw-recs (fn [rec] (not= (get rec "status") "completed"))))
+
+                          (= db-key "unorganized_books")
+                          (.-length (.filter raw-recs (fn [rec] (or (= (get rec "status") "low_confidence") (= (get rec "status") "failed")))))
+
+                          :else
                           (.-length raw-recs))]
           [:button.p-4.rounded-xl.border.text-left.transition-all.cursor-pointer.flex.flex-col.space-y-2
            {:key db-key

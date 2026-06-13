@@ -30,6 +30,7 @@
                          :batchSize 5
                          :enableCaching true
                          :isbnOnlyRequests false
+                         :unknownFolderName "Unknown"
                          :googleBooksApiKey "AIzaSyDYh87ATtVXKn9rF55Plh-1mGJhWFmigU0"}
                         {:pretty true})))
   (when-not (.exists state-file)

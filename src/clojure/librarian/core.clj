@@ -991,16 +991,57 @@
             (when auto-cleanup?
               (io/delete-file (io/file file-path) true))
             {:status "completed" :meta metadata :destination final-dest :ocr ocr-text :ocr-status ocr-status})
-          (do
-            (let [conf (or (and metadata (:confidence metadata)) 0)]
-              (write-log! (str "⚠️ [Librarian] Classification for '" filename "' fell below confidence threshold (Threshold: " confidence-threshold "% | Got: " conf "%)")))
-            {:status "low_confidence" :reason "Low confidence" :ocr ocr-text :ocr-status ocr-status})))
+          (let [conf (or (and metadata (:confidence metadata)) 0)
+                reason "Low confidence"
+                unknown-folder-name (:unknownFolderName config "Unknown")
+                resolved-out-dir (resolve-path output-dir)
+                unknown-dir (str resolved-out-dir "/" (sanitize unknown-folder-name))
+                final-dest (str unknown-dir "/" filename)
+                first-new-dir (when-not (.exists (io/file unknown-dir)) unknown-dir)]
+            (write-log! (str "⚠️ [Librarian] Classification for '" filename "' fell below confidence threshold (Threshold: " confidence-threshold "% | Got: " conf "%)"))
+            (write-log! (str "📂 [Librarian] Relocating unorganized book to: " final-dest))
+            (io/make-parents final-dest)
+            (io/copy (io/file file-path) (io/file final-dest))
+            (when first-new-dir
+              (chown-to-logged-user! first-new-dir))
+            (chown-to-logged-user! final-dest)
+            (when auto-cleanup?
+              (io/delete-file (io/file file-path) true))
+            {:status "low_confidence" :reason reason :destination final-dest :ocr ocr-text :ocr-status ocr-status})))
 
       (= (:status metadata-or-error) "low_confidence")
-      {:status "low_confidence" :reason (:reason metadata-or-error) :ocr ocr-text :ocr-status ocr-status}
+      (let [reason (:reason metadata-or-error)
+            unknown-folder-name (:unknownFolderName config "Unknown")
+            resolved-out-dir (resolve-path output-dir)
+            unknown-dir (str resolved-out-dir "/" (sanitize unknown-folder-name))
+            final-dest (str unknown-dir "/" filename)
+            first-new-dir (when-not (.exists (io/file unknown-dir)) unknown-dir)]
+        (write-log! (str "📂 [Librarian] Relocating unorganized book (low confidence) to: " final-dest))
+        (io/make-parents final-dest)
+        (io/copy (io/file file-path) (io/file final-dest))
+        (when first-new-dir
+          (chown-to-logged-user! first-new-dir))
+        (chown-to-logged-user! final-dest)
+        (when auto-cleanup?
+          (io/delete-file (io/file file-path) true))
+        {:status "low_confidence" :reason reason :destination final-dest :ocr ocr-text :ocr-status ocr-status})
 
       :else
-      {:status "failed" :reason (:reason metadata-or-error) :ocr ocr-text :ocr-status ocr-status})))
+      (let [reason (:reason metadata-or-error)
+            unknown-folder-name (:unknownFolderName config "Unknown")
+            resolved-out-dir (resolve-path output-dir)
+            unknown-dir (str resolved-out-dir "/" (sanitize unknown-folder-name))
+            final-dest (str unknown-dir "/" filename)
+            first-new-dir (when-not (.exists (io/file unknown-dir)) unknown-dir)]
+        (write-log! (str "📂 [Librarian] Relocating unorganized book (failed) to: " final-dest))
+        (io/make-parents final-dest)
+        (io/copy (io/file file-path) (io/file final-dest))
+        (when first-new-dir
+          (chown-to-logged-user! first-new-dir))
+        (chown-to-logged-user! final-dest)
+        (when auto-cleanup?
+          (io/delete-file (io/file file-path) true))
+        {:status "failed" :reason reason :destination final-dest :ocr ocr-text :ocr-status ocr-status}))))
 
 (defn get-cached-status [state path]
   (let [scanned (or (:scanned_books state) [])]
@@ -1045,7 +1086,8 @@
         ;; 3. Update file_organization (if metadata is resolved successfully)
         file-org (or (:file_organization state) [])
         org-idx (first (keep-indexed (fn [idx item] (when (= (:filepath item) path) idx)) file-org))
-        new-org-item (when (and (= status "completed") meta)
+        new-org-item (cond
+                       (and (= status "completed") meta)
                        {:filepath path
                         :dest_path (:destination res)
                         :author (:author meta)
@@ -1056,7 +1098,22 @@
                         :confidence (:confidence meta)
                         :status "completed"
                         :notes (:notes meta)
-                        :timestamp timestamp})
+                        :timestamp timestamp}
+
+                       (or (= status "low_confidence") (= status "failed"))
+                       {:filepath path
+                        :dest_path (:destination res)
+                        :author "Unknown"
+                        :title filename
+                        :year nil
+                        :genre "Unclassified"
+                        :isbn (or isbn "null")
+                        :confidence 0
+                        :status status
+                        :notes (get res :reason "Low confidence or fallback classification failure")
+                        :timestamp timestamp}
+
+                       :else nil)
         new-file-org (if new-org-item
                        (if org-idx
                          (assoc file-org org-idx new-org-item)

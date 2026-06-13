@@ -93,9 +93,23 @@
           
         {:status "completed" :meta metadata :destination final-dest :ocr ocr-text})
         
-      (do
+      (let [unknown-folder-name (:unknownFolderName config "Unknown")
+            resolved-out-dir (core/resolve-path output-dir)
+            unknown-dir (str resolved-out-dir "/" (core/sanitize unknown-folder-name))
+            final-dest (str unknown-dir "/" filename)
+            first-new-dir (when-not (.exists (io/file unknown-dir)) unknown-dir)]
         (println "❌ [Organizer] Validation failed or insufficient confidence threshold.")
-        {:status "low_confidence" :reason "Low confidence" :ocr ocr-text}))))
+        (println "📂 [Organizer] Relocating unorganized book to:" final-dest)
+        
+        (io/make-parents final-dest)
+        (io/copy (io/file file-path) (io/file final-dest))
+        (when first-new-dir
+          (core/chown-to-logged-user! first-new-dir))
+        (core/chown-to-logged-user! final-dest)
+        (when auto-cleanup?
+          (println "🗑️ [Organizer] Active Clean-up enabled. Purging source raw book:" file-path)
+          (io/delete-file (io/file file-path) true))
+        {:status "low_confidence" :reason "Low confidence or metadata query failed" :destination final-dest :ocr ocr-text}))))
 
 (defn run-organizer-sync! []
   (let [config (core/load-config)
