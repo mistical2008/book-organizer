@@ -20,7 +20,7 @@
     
     (let [files (for [dir resolved-inputs
                       file (if (.exists (io/file dir)) (filter #(.isFile %) (.listFiles (io/file dir))) [])
-                      :when (re-find #"\.(pdf|epub|djvu|fb2|fb2\.zip|docx|html|htm|txt|md|markdown)$" (.getName file))]
+                      :when (re-find #"\.(pdf|epub|djvu|fb2|fb2\.zip|mobi|docx|html|htm|txt|md|markdown)$" (.getName file))]
                   file)]
       
       (if (empty? files)

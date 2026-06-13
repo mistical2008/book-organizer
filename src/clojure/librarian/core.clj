@@ -763,7 +763,8 @@
         (str/ends-with? filename ".htm")
         (str/ends-with? filename ".txt")
         (str/ends-with? filename ".md")
-        (str/ends-with? filename ".markdown"))))
+        (str/ends-with? filename ".markdown")
+        (str/ends-with? filename ".mobi"))))
 
 (defn extract-docx-text [file-path]
   (try
@@ -800,6 +801,150 @@
     (slurp file-path :encoding "UTF-8")
     (catch Exception e
       (println "⚠️ Failed to extract TXT text: " (.getMessage e))
+      "")))
+
+(defn bytes->uint16 [^bytes b offset]
+  (bit-or (bit-shift-left (bit-and (aget b offset) 0xFF) 8)
+          (bit-and (aget b (+ offset 1)) 0xFF)))
+
+(defn bytes->uint32 [^bytes b offset]
+  (bit-or (bit-shift-left (bit-and (aget b offset) 0xFF) 24)
+          (bit-shift-left (bit-and (aget b (+ offset 1)) 0xFF) 16)
+          (bit-shift-left (bit-and (aget b (+ offset 2)) 0xFF) 8)
+          (bit-and (aget b (+ offset 3)) 0xFF)))
+
+(defn decompress-palmdoc [^bytes compressed]
+  (let [len (alength compressed)]
+    (loop [i 0
+           cursor 0
+           buf (byte-array 16384)]
+      (if (>= i len)
+        (let [res (byte-array cursor)]
+          (System/arraycopy buf 0 res 0 cursor)
+          res)
+        (let [cap (alength buf)
+              buf (if (>= (+ cursor 100) cap)
+                    (let [new-buf (byte-array (* cap 2))]
+                      (System/arraycopy buf 0 new-buf 0 cursor)
+                      new-buf)
+                    buf)
+              b (bit-and (aget compressed i) 0xFF)]
+          (cond
+            (and (>= b 1) (<= b 8))
+            (do
+              (dotimes [j b]
+                (let [src-idx (+ i 1 j)
+                      dst-idx (+ cursor j)]
+                  (when (< src-idx len)
+                    (aset buf dst-idx (aget compressed src-idx)))))
+              (recur (+ i 1 b) (+ cursor b) buf))
+
+            (and (>= b 128) (<= b 191))
+            (if (< (+ i 1) len)
+              (let [b2 (bit-and (aget compressed (+ i 1)) 0xFF)
+                    val (bit-or (bit-shift-left (bit-and b 0x3F) 8) b2)
+                    dist (inc (quot val 8))
+                    length (+ (bit-and val 7) 3)]
+                (dotimes [j length]
+                  (let [src-idx (- (+ cursor j) dist)
+                        dst-idx (+ cursor j)]
+                    (when (>= src-idx 0)
+                      (aset buf dst-idx (aget buf src-idx)))))
+                (recur (+ i 2) (+ cursor length) buf))
+              (recur (inc i) cursor buf))
+
+            (and (>= b 192) (<= b 255))
+            (do (aset buf cursor (byte 32))
+                (aset buf (inc cursor) (byte (bit-xor b 0x80)))
+                (recur (inc i) (+ cursor 2) buf))
+
+            :else
+            (do (aset buf cursor (byte b))
+                (recur (inc i) (inc cursor) buf))))))))
+
+(defn extract-mobi-text [file-path]
+  (try
+    (let [f (io/file file-path)]
+      (if (.exists f)
+        (with-open [raf (java.io.RandomAccessFile. f "r")]
+          (let [header-buf (byte-array 78)]
+            (.readFully raf header-buf)
+            (let [num-records (bytes->uint16 header-buf 76)]
+              (let [record-table-buf (byte-array (* num-records 8))]
+                (.readFully raf record-table-buf)
+                (let [record-offsets (vec (map (fn [i] (bytes->uint32 record-table-buf (* i 8))) (range num-records)))]
+                  (if (seq record-offsets)
+                    (let [rec0-offset (first record-offsets)
+                          rec0-len (if (> num-records 1)
+                                     (- (second record-offsets) rec0-offset)
+                                     (- (.length raf) rec0-offset))
+                          rec0-buf (byte-array rec0-len)]
+                      (.seek raf rec0-offset)
+                      (.readFully raf rec0-buf)
+                      (let [compression (bytes->uint16 rec0-buf 0)
+                            text-len (bytes->uint32 rec0-buf 4)
+                            num-text-records (bytes->uint16 rec0-buf 8)
+                            mobi-id (try (String. rec0-buf 16 4 "UTF-8") (catch Exception _ "MOBI"))
+                            mobi-header-len (bytes->uint32 rec0-buf 20)
+                            encoding (bytes->uint32 rec0-buf 28)
+                            charset (if (= encoding 65001) "UTF-8" "CP1252")
+                            has-exth? (not (zero? (bit-and (bytes->uint32 rec0-buf 128) 0x40)))
+                            exth-offset (+ 16 mobi-header-len)
+                            metadata-map (when (and has-exth? (< exth-offset rec0-len))
+                                           (try
+                                             (let [exth-id (String. rec0-buf exth-offset 4 "UTF-8")]
+                                               (if (= exth-id "EXTH")
+                                                 (let [exth-header-size (bytes->uint32 rec0-buf (+ exth-offset 4))
+                                                       record-count (bytes->uint32 rec0-buf (+ exth-offset 8))]
+                                                   (loop [idx 0
+                                                          curr-offset (+ exth-offset 12)
+                                                          meta {}]
+                                                     (if (or (>= idx record-count) (>= curr-offset rec0-len))
+                                                       meta
+                                                       (let [rec-type (bytes->uint32 rec0-buf curr-offset)
+                                                             rec-len (bytes->uint32 rec0-buf (+ curr-offset 4))
+                                                             data-len (- rec-len 8)]
+                                                         (if (and (> rec-len 8) (<= (+ curr-offset rec-len) rec0-len))
+                                                           (let [data-str (String. rec0-buf (+ curr-offset 8) data-len "UTF-8")]
+                                                             (recur (inc idx)
+                                                                    (+ curr-offset rec-len)
+                                                                    (assoc meta rec-type data-str)))
+                                                           (recur (inc idx) (+ curr-offset rec-len) meta))))))))
+                                             (catch Exception _ nil)))
+                            full-name-offset (bytes->uint32 rec0-buf 84)
+                            full-name-len (bytes->uint32 rec0-buf 88)
+                            title (when (and (pos? full-name-len) (< (+ full-name-offset full-name-len) rec0-len))
+                                    (String. rec0-buf full-name-offset full-name-len charset))
+                            text-records-to-read (min num-text-records 30)]
+                        (loop [rec-idx 1
+                               text-acc []]
+                          (if (or (> rec-idx text-records-to-read) (>= rec-idx num-records))
+                            (let [text-content (str/join " " text-acc)]
+                              (str "Title: " (or title (get metadata-map 503) "Unknown") "\n"
+                                   "Author: " (or (get metadata-map 100) "Unknown") "\n"
+                                   "ISBN: " (or (get metadata-map 113) "Unknown") "\n"
+                                   "Genre: " (or (get metadata-map 104) "Unknown") "\n"
+                                   "Description: " (or (get metadata-map 103) "Unknown") "\n"
+                                   "------\n"
+                                   (subs text-content 0 (min (count text-content) 50000))))
+                            (let [offset (nth record-offsets rec-idx)
+                                  next-offset (if (< (inc rec-idx) num-records)
+                                                (nth record-offsets (inc rec-idx))
+                                                (.length raf))
+                                  len (- next-offset offset)
+                                  rec-buf (byte-array len)]
+                              (.seek raf offset)
+                              (.readFully raf rec-buf)
+                              (let [decompressed-bytes (cond
+                                                         (= compression 1) rec-buf
+                                                         (= compression 2) (decompress-palmdoc rec-buf)
+                                                         :else (byte-array 0))
+                                    decoded-str (try (String. decompressed-bytes charset) (catch Exception _ ""))]
+                                (recur (inc rec-idx) (conj text-acc decoded-str))))))))
+                    ""))))))
+        ""))
+    (catch Exception e
+      (println "⚠️ Failed to extract MOBI text: " (.getMessage e))
       "")))
 
 (defn extract-epub-text [file-path]
@@ -881,9 +1026,10 @@
     (let [res (let [filename (.getName (io/file file-path))
                     ext (str/lower-case (some-> (re-find #"\.([^.]+)$" filename) second))]
                 (cond
-                  (or (= ext "epub") (= ext "fb2") (= ext "docx") (= ext "html") (= ext "htm") (= ext "txt") (= ext "md") (= ext "markdown") (str/ends-with? (str/lower-case filename) ".fb2.zip"))
+                  (or (= ext "epub") (= ext "fb2") (= ext "mobi") (= ext "docx") (= ext "html") (= ext "htm") (= ext "txt") (= ext "md") (= ext "markdown") (str/ends-with? (str/lower-case filename) ".fb2.zip"))
                   {:text (cond
                            (= ext "epub") (extract-epub-text file-path)
+                           (= ext "mobi") (extract-mobi-text file-path)
                            (= ext "docx") (extract-docx-text file-path)
                            (or (= ext "html") (= ext "htm")) (extract-html-text file-path)
                            (or (= ext "txt") (= ext "md") (= ext "markdown")) (extract-txt-text file-path)
@@ -1297,7 +1443,7 @@
         input-dirs (or (:inputDirs config) ["/data/books_to_sort"])
         enable-caching? (not= (:enableCaching config) false)
         resolved-inputs (map resolve-path input-dirs)
-        files (filter #(and (.isFile %) (re-find #"\.(pdf|epub|djvu|fb2|fb2\.zip|docx|html|htm|txt|md|markdown)$" (.getName %)))
+        files (filter #(and (.isFile %) (re-find #"\.(pdf|epub|djvu|fb2|fb2\.zip|mobi|docx|html|htm|txt|md|markdown)$" (.getName %)))
                       (mapcat (fn [d]
                                 (let [f (io/file d)]
                                   (if (and (.exists f) (.isDirectory f))

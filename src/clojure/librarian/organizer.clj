@@ -117,7 +117,7 @@
         input-dirs (or (:inputDirs config) ["/data/books_to_sort"])
         enable-caching? (not= (:enableCaching config) false)
         resolved-inputs (map core/resolve-path input-dirs)
-        files (filter #(and (.isFile %) (re-find #"\.(pdf|epub|djvu|fb2|fb2\.zip|docx|html|htm|txt|md|markdown)$" (.getName %)))
+        files (filter #(and (.isFile %) (re-find #"\.(pdf|epub|djvu|fb2|fb2\.zip|mobi|docx|html|htm|txt|md|markdown)$" (.getName %)))
                       (mapcat (fn [d]
                                 (let [f (io/file d)]
                                   (if (and (.exists f) (.isDirectory f))
