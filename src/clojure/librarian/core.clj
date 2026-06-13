@@ -1013,6 +1013,7 @@
                           :isbn_detected (if (or (nil? isbn) (= isbn "null") (= isbn "None")) nil isbn)
                           :status status
                           :ocr_status (:ocr-status res)
+                          :reason (if (= status "completed") nil (get res :reason "Low confidence classification or missing metadata"))
                           :timestamp timestamp}
         new-scanned (if scanned-idx
                       (assoc scanned scanned-idx new-scanned-item)

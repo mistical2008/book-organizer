@@ -992,12 +992,16 @@
         db-search (or (:db-search @app-state) "")
         selected-record (:selected-record @app-state)
         raw-state (or (:raw-state @app-state) {})
-        records (or (get raw-state active-db) #js [])
+        raw-records (or (get raw-state active-db) #js [])
+        records (if (= active-db "scanned_books")
+                  (.filter raw-records (fn [rec] (not= (get rec "status") "completed")))
+                  raw-records)
         get-reconciled-val (fn [rec field-key]
                              (let [raw (get rec field-key)]
-                               (if (and (= active-db "scanned_books")
-                                        (= field-key "isbn_detected")
-                                        (or (nil? raw) (= raw "null") (= raw "None")))
+                               (cond
+                                 (and (= active-db "scanned_books")
+                                      (= field-key "isbn_detected")
+                                      (or (nil? raw) (= raw "null") (= raw "None")))
                                  (let [filepath (or (get rec "filepath") (get rec :filepath))
                                        orgs (or (get raw-state "file_organization") (get raw-state :file_organization) #js [])
                                        matched-org (.find orgs (fn [o] (= (or (get o "filepath") (get o :filepath)) filepath)))]
@@ -1007,7 +1011,19 @@
                                          nil
                                          isbn))
                                      nil))
-                                 raw)))
+
+                                 (and (= active-db "scanned_books")
+                                      (= field-key "reason")
+                                      (or (nil? raw) (= raw "null") (= raw "None") (= raw "")))
+                                 (let [status (get rec "status")
+                                       ocr-status (get rec "ocr_status")]
+                                   (cond
+                                     (= status "failed") "Scan or metadata resolution error"
+                                     (= status "low_confidence") "Below confidence threshold"
+                                     (= ocr-status "failed") "OCR text extraction failed"
+                                     :else "Pending or manual intervention required"))
+
+                                 :else raw)))
         search-term (str/lower-case (str/trim db-search))
         filtered-records (if (str/blank? search-term)
                            records
@@ -1018,6 +1034,7 @@
                                        ["filename" "Filename"]
                                        ["isbn_detected" "Detected ISBN"]
                                        ["status" "Status"]
+                                       ["reason" "Not Processed Reason"]
                                        ["timestamp" "Timestamp"]]
                       "isbn_requests" [["filepath" "File Path"]
                                        ["isbn" "ISBN Query"]
@@ -1054,7 +1071,10 @@
              ["isbn_requests" "ISBN Request Logs" "bg-amber-500/10 text-amber-400" "🔍"]
              ["ai_categorization" "AI Categorization" "bg-purple-500/10 text-purple-400" "🧠"]
              ["file_organization" "File Relocations" "bg-emerald-500/10 text-emerald-400" "📂"]]]
-        (let [count-val (or (and (get raw-state db-key) (.-length (get raw-state db-key))) 0)]
+        (let [raw-recs (or (get raw-state db-key) #js [])
+              count-val (if (= db-key "scanned_books")
+                          (.-length (.filter raw-recs (fn [rec] (not= (get rec "status") "completed"))))
+                          (.-length raw-recs))]
           [:button.p-4.rounded-xl.border.text-left.transition-all.cursor-pointer.flex.flex-col.space-y-2
            {:key db-key
             :class (if (= active-db db-key)
