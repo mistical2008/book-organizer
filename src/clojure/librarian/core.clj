@@ -926,72 +926,81 @@
                        (extract-valid-isbn filename))
         _ (when (and isbn-match (not (str/blank? isbn-match)))
             (write-log! (str "🔍 [Librarian] Detected ISBN '" isbn-match "' for publication '" filename "'")))
-        metadata (let [api-meta (when (and isbn-match (not (str/blank? isbn-match)))
+        metadata-or-error (let [api-meta (when (and isbn-match (not (str/blank? isbn-match)))
                                   (query-book-metadata isbn-match))]
-                   (cond
-                     api-meta
-                     api-meta
+                           (cond
+                             api-meta
+                             {:status "success" :meta api-meta}
 
-                     isbn-only?
-                     (do
-                       (if (and isbn-match (not (str/blank? isbn-match)))
-                         (write-log! (str "⚠️ [Librarian] ISBN '" isbn-match "' detected for '" filename "' but API query produced no metadata. Skipping fallback as isbnOnlyRequests is active."))
-                         (write-log! (str "ℹ️ [Librarian] Skipping non-ISBN classification for '" filename "' (ISBN-only mode active)")))
-                       nil)
+                             isbn-only?
+                             (do
+                               (if (and isbn-match (not (str/blank? isbn-match)))
+                                 (write-log! (str "⚠️ [Librarian] ISBN '" isbn-match "' detected for '" filename "' but API query produced no metadata. Skipping fallback as isbnOnlyRequests is active."))
+                                 (write-log! (str "ℹ️ [Librarian] Skipping non-ISBN classification for '" filename "' (ISBN-only mode active)")))
+                               {:status "low_confidence" :reason "ISBN-only mode and no metadata found"})
 
-                     :else
-                     (try
-                       (write-log! (str "🤖 [Librarian] Running Gemini AI classification fallback for: " filename))
-                       (extract-via-gemini ocr-text filename gemini-model)
-                       (catch Exception e
-                         (write-log! (str "⚠️ [Librarian] Gemini AI classification failed for '" filename "': " (.getMessage e)))
-                         nil))))]
-    (if (and metadata (>= (or (:confidence metadata) 0) confidence-threshold))
-      (let [dest-name (compute-destination metadata destination-template)
-            ;; Split by slashes to find subdirectories defined inside the template
-            raw-segments (str/split dest-name #"[/\\\\]+")
-            file-base-name (or (last raw-segments) "Untitled Book")
-            template-subdirs (filter #(not (str/blank? %)) (map sanitize (butlast raw-segments)))
+                             :else
+                             (try
+                               (write-log! (str "🤖 [Librarian] Running Gemini AI classification fallback for: " filename))
+                               {:status "success" :meta (extract-via-gemini ocr-text filename gemini-model)}
+                               (catch Exception e
+                                 (write-log! (str "⚠️ [Librarian] Gemini AI classification failed for '" filename "': " (.getMessage e)))
+                                 {:status "failed" :reason (.getMessage e)}))))]
+    (cond
+      (= (:status metadata-or-error) "success")
+      (let [metadata (:meta metadata-or-error)]
+        (if (and metadata (>= (or (:confidence metadata) 0) confidence-threshold))
+          (let [dest-name (compute-destination metadata destination-template)
+                ;; Split by slashes to find subdirectories defined inside the template
+                raw-segments (str/split dest-name #"[/\\\\]+")
+                file-base-name (or (last raw-segments) "Untitled Book")
+                template-subdirs (filter #(not (str/blank? %)) (map sanitize (butlast raw-segments)))
+                
+                ;; Determine base directories via path resolver
+                resolved-out-dir (resolve-path output-dir)
+                
+                ;; Resolve category grouping subdirectories
+                genre (or (:genre metadata) "Uncategorized")
+                sub-dirs (if (seq template-subdirs)
+                           template-subdirs
+                           [(sanitize genre)])
+                
+                ;; Feature: Each book should be stored under a folder with the same name as the file (excluding extension)
+                file-folder (sanitize file-base-name)
+                
+                ;; Build category folder path
+                category-folder (str/join "/" (concat [resolved-out-dir] sub-dirs [file-folder]))
+                ext (or (re-find #"\.[a-zA-Z0-9]+$" file-path) ".pdf")
+                final-dest (str category-folder "/" (sanitize file-base-name) ext)
+                
+                ;; Determine first new directory prior to actual creation for ownership adjustment
+                all-path-levels (reductions (fn [acc segment] (.getAbsolutePath (io/file acc segment)))
+                                            resolved-out-dir
+                                            (concat sub-dirs [file-folder]))
+                first-new-dir (first (filter #(not (.exists (io/file %))) all-path-levels))]
+            (write-log! (str "✅ [Librarian] Successfully classified '" filename "' -> '" dest-name "' (Confidence: " (:confidence metadata) "%)"))
+            (println "🚚 Relocating to: " final-dest)
+            (io/make-parents final-dest)
+            (io/copy (io/file file-path) (io/file final-dest))
             
-            ;; Determine base directories via path resolver
-            resolved-out-dir (resolve-path output-dir)
+            ;; Change ownership to the resolved logged-in user
+            (when first-new-dir
+              (chown-to-logged-user! first-new-dir))
+            (chown-to-logged-user! final-dest)
             
-            ;; Resolve category grouping subdirectories
-            genre (or (:genre metadata) "Uncategorized")
-            sub-dirs (if (seq template-subdirs)
-                       template-subdirs
-                       [(sanitize genre)])
-            
-            ;; Feature: Each book should be stored under a folder with the same name as the file (excluding extension)
-            file-folder (sanitize file-base-name)
-            
-            ;; Build category folder path
-            category-folder (str/join "/" (concat [resolved-out-dir] sub-dirs [file-folder]))
-            ext (or (re-find #"\.[a-zA-Z0-9]+$" file-path) ".pdf")
-            final-dest (str category-folder "/" (sanitize file-base-name) ext)
-            
-            ;; Determine first new directory prior to actual creation for ownership adjustment
-            all-path-levels (reductions (fn [acc segment] (.getAbsolutePath (io/file acc segment)))
-                                        resolved-out-dir
-                                        (concat sub-dirs [file-folder]))
-            first-new-dir (first (filter #(not (.exists (io/file %))) all-path-levels))]
-        (write-log! (str "✅ [Librarian] Successfully classified '" filename "' -> '" dest-name "' (Confidence: " (:confidence metadata) "%)"))
-        (println "🚚 Relocating to: " final-dest)
-        (io/make-parents final-dest)
-        (io/copy (io/file file-path) (io/file final-dest))
-        
-        ;; Change ownership to the resolved logged-in user
-        (when first-new-dir
-          (chown-to-logged-user! first-new-dir))
-        (chown-to-logged-user! final-dest)
-        
-        (when auto-cleanup?
-          (io/delete-file (io/file file-path) true))
-        {:status "completed" :meta metadata :destination final-dest :ocr ocr-text :ocr-status ocr-status})
-      (do
-        (let [conf (or (and metadata (:confidence metadata)) 0)]
-          (write-log! (str "⚠️ [Librarian] Classification for '" filename "' fell below confidence threshold (Threshold: " confidence-threshold "% | Got: " conf "%)")))
-        {:status "low_confidence" :reason "Low confidence" :ocr ocr-text :ocr-status ocr-status}))))
+            (when auto-cleanup?
+              (io/delete-file (io/file file-path) true))
+            {:status "completed" :meta metadata :destination final-dest :ocr ocr-text :ocr-status ocr-status})
+          (do
+            (let [conf (or (and metadata (:confidence metadata)) 0)]
+              (write-log! (str "⚠️ [Librarian] Classification for '" filename "' fell below confidence threshold (Threshold: " confidence-threshold "% | Got: " conf "%)")))
+            {:status "low_confidence" :reason "Low confidence" :ocr ocr-text :ocr-status ocr-status})))
+
+      (= (:status metadata-or-error) "low_confidence")
+      {:status "low_confidence" :reason (:reason metadata-or-error) :ocr ocr-text :ocr-status ocr-status}
+
+      :else
+      {:status "failed" :reason (:reason metadata-or-error) :ocr ocr-text :ocr-status ocr-status})))
 
 (defn get-cached-status [state path]
   (let [scanned (or (:scanned_books state) [])]
@@ -1093,7 +1102,6 @@
                                           status (get-cached-status state path)]
                                       (not (and enable-caching? 
                                                 (or (= status "completed") 
-                                                    (= status "failed") 
                                                     (= status "low_confidence"))))))
                                   files)]
     (if (empty? unprocessed-files)
@@ -1205,7 +1213,7 @@
             (if-let [file (first remaining-files)]
               (let [path (.getAbsolutePath file)
                     cached-status (get-cached-status current-state path)]
-                (if (and enable-caching? (and cached-status (or (= cached-status "completed") (= cached-status "failed") (= cached-status "low_confidence"))))
+                (if (and enable-caching? (and cached-status (or (= cached-status "completed") (= cached-status "low_confidence"))))
                   (recur (rest remaining-files) current-state (inc skipped-count))
                   (do
                     (check-pause-and-wait!)
