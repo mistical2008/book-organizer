@@ -243,7 +243,36 @@
     {}))
 
 (defn save-state! [state]
-  (spit db-path (json/generate-string state {:pretty true})))
+  (locking db-path
+    (spit db-path (json/generate-string state {:pretty true}))))
+
+(defn update-scan-progress! [processed total phase current-file]
+  (locking db-path
+    (let [state (load-state)
+          updated-state (assoc state :scan_progress {:processed processed
+                                                     :total total
+                                                     :phase phase
+                                                     :current_file current-file})]
+      (save-state! updated-state))))
+
+(defn update-scanned-book-status! [path filename status ocr-status reason isbn]
+  (locking db-path
+    (let [state (load-state)
+          timestamp (str (java.time.Instant/now))
+          scanned (or (:scanned_books state) [])
+          scanned-idx (first (keep-indexed (fn [idx item] (when (= (:filepath item) path) idx)) scanned))
+          new-item {:filepath path
+                    :filename filename
+                    :isbn_detected (when (and isbn (not (str/blank? isbn)) (not= isbn "null")) isbn)
+                    :status status
+                    :ocr_status ocr-status
+                    :reason reason
+                    :timestamp timestamp}
+          new-scanned (if scanned-idx
+                        (assoc scanned scanned-idx new-item)
+                        (conj scanned new-item))
+          updated-state (assoc state :scanned_books new-scanned)]
+      (save-state! updated-state))))
 
 (defn write-log! [msg]
   (let [logs-file (io/file "data/logs.json")
@@ -1105,8 +1134,9 @@
         (catch Exception e
           (write-log! (str "⚠️ [Librarian Permission] Error changing ownership on " path ": " (.getMessage e))))))))
 
-(defn process-book [file-path config]
+(defn process-book [file-path config processed total]
   (let [filename (.getName (io/file file-path))
+        _ (update-scan-progress! processed total "Book scanning" filename)
         _ (write-log! (str "📖 [Librarian] Processing publication: " filename))
         extracted-res (extract-book-text-with-status file-path)
         ocr-text (:text extracted-res)
@@ -1121,6 +1151,7 @@
                        (extract-valid-isbn filename))
         _ (when (and isbn-match (not (str/blank? isbn-match)))
             (write-log! (str "🔍 [Librarian] Detected ISBN '" isbn-match "' for publication '" filename "'")))
+        _ (update-scan-progress! processed total "Getting book info" filename)
         metadata-or-error (let [api-meta (when (and isbn-match (not (str/blank? isbn-match)))
                                   (query-book-metadata isbn-match))]
                            (cond
@@ -1141,6 +1172,7 @@
                                (catch Exception e
                                  (write-log! (str "⚠️ [Librarian] Gemini AI classification failed for '" filename "': " (.getMessage e)))
                                  {:status "failed" :reason (.getMessage e)}))))]
+    (update-scan-progress! processed total "Organizing" filename)
     (cond
       (= (:status metadata-or-error) "success")
       (let [metadata (:meta metadata-or-error)]
@@ -1333,21 +1365,30 @@
      :ai_categorization new-ai-cat
      :file_organization new-file-org}))
 
-(defn- scan-chunk-files [chunk-files]
+(defn- scan-chunk-files [chunk-files scanned-counter total-count]
   (keep (fn [file]
           (check-pause-and-wait!)
           (let [path (.getAbsolutePath file)
                 filename (.getName file)
+                idx (swap! scanned-counter inc)
+                _ (update-scan-progress! idx total-count "Book scanning" filename)
+                _ (update-scanned-book-status! path filename "scanning" "extracting" "Running scan and text extraction..." nil)
                 ;; Detect ISBN (tries filename first, then text/OCR extraction)
                 isbn (or (extract-valid-isbn filename)
                          (let [res (extract-book-text-with-status path)]
                            (extract-valid-isbn (:text res))))]
-            (when (and isbn (not (str/blank? isbn)))
-              [path isbn])))
+            (if (and isbn (not (str/blank? isbn)))
+              (do
+                (update-scanned-book-status! path filename "scanning" "success" (str "Detected ISBN: " isbn) isbn)
+                [path isbn])
+              (do
+                (update-scanned-book-status! path filename "scanning" "failed" "No ISBN detected" nil)
+                nil))))
         chunk-files))
 
 (defn pre-process-and-batch-isbn-lookups! [files config state]
   (let [enable-caching? (not= (:enableCaching config) false)
+        _ (update-scan-progress! 0 (count files) "Book scanning" "Pre-processing library files...")
         ;; 1. Filter out files that are already completed/scanned
         unprocessed-files (filter (fn [file]
                                     (let [path (.getAbsolutePath file)
@@ -1360,10 +1401,12 @@
       state
       (let [chunk-size (or (:batchSize config) 12)
             file-chunks (partition-all chunk-size unprocessed-files)
-            total-chunks (count file-chunks)]
-        (write-log! (str "📦 [Batch Engine] Commencing ISBN scanning for " (count unprocessed-files) 
+            total-chunks (count file-chunks)
+            scanned-counter (atom 0)
+            unprocessed-count (count unprocessed-files)]
+        (write-log! (str "📦 [Batch Engine] Commencing ISBN scanning for " unprocessed-count 
                          " unprocessed files in " total-chunks " chunks of " chunk-size " files..."))
-        (let [first-scan-fut (future (scan-chunk-files (first file-chunks)))]
+        (let [first-scan-fut (future (scan-chunk-files (first file-chunks) scanned-counter unprocessed-count))]
           (loop [remaining-chunks file-chunks
                  current-state state
                  chunk-idx 1
@@ -1376,7 +1419,7 @@
                   (let [next-chunk (second remaining-chunks)
                         next-scan-fut (when next-chunk
                                         (write-log! (str "⚡ [Batch Engine] In parallel running next chunk scanning (" (inc chunk-idx) "/" total-chunks ")"))
-                                        (future (scan-chunk-files next-chunk)))
+                                        (future (scan-chunk-files next-chunk scanned-counter unprocessed-count)))
                         unique-isbns (distinct (map second path-isbn-pairs))
                         existing-cache (or (:batch_isbn_cache current-state) {})
                         ;; Only fetch ISBNs not already resolved in cache
@@ -1392,7 +1435,8 @@
                         (recur (rest remaining-chunks) current-state (inc chunk-idx) next-scan-fut))
                       (do
                         (write-log! (str "📡 [Batch Engine] Make requests for the " chunk-idx "/" total-chunks " chunk"))
-                        (let [bibkeys (str/join "," (map #(str "ISBN:" (str/replace % #"\D" "")) isbns-to-fetch))
+                        (let [_ (update-scan-progress! @scanned-counter unprocessed-count "Getting book info" (str "Querying Open Library for chunk " chunk-idx "/" total-chunks "..."))
+                              bibkeys (str/join "," (map #(str "ISBN:" (str/replace % #"\D" "")) isbns-to-fetch))
                               url (str "https://openlibrary.org/api/books?bibkeys=" bibkeys "&format=json&jscmd=data")
                               next-state 
                               (try
@@ -1464,14 +1508,17 @@
                  skipped-count 0]
             (if-let [file (first remaining-files)]
               (let [path (.getAbsolutePath file)
-                    cached-status (get-cached-status current-state path)]
+                    cached-status (get-cached-status current-state path)
+                    processed-count (inc (- files-count (count remaining-files)))]
                 (if (and enable-caching? (and cached-status (or (= cached-status "completed") (= cached-status "low_confidence"))))
-                  (recur (rest remaining-files) current-state (inc skipped-count))
+                  (do
+                    (update-scan-progress! processed-count files-count "Organizing" (.getName file))
+                    (recur (rest remaining-files) current-state (inc skipped-count)))
                   (do
                     (check-pause-and-wait!)
                     (let [_ (write-log! (str "📖 [Librarian] Processing single file: " (.getName file)))
                           res (try
-                                (process-book path config)
+                                (process-book path config processed-count files-count)
                                 (catch Exception e
                                   (write-log! (str "❌ Manual book scan failed: " (.getAbsolutePath file) " (" (.getMessage e) ")"))
                                   {:status "failed" :ocr-status "failed" :reason (.getMessage e)}))
@@ -1483,9 +1530,11 @@
                          (Thread/sleep 2500))
                        (recur (rest remaining-files) new-state skipped-count)))))
               (do
+                (update-scan-progress! files-count files-count "Completed" "")
                 (when (> skipped-count 0)
                   (write-log! (str "⏭️ [Librarian] Skipped " skipped-count " cached files (previously completed or low-confidence classified) to save API/system resources.")))
                 current-state)))]
+      (update-scan-progress! files-count files-count "Completed" "")
       (write-log! "✅ [Librarian] Library scanning successfully completed."))))
 
 (when (= *file* (System/getProperty "babashka.file"))

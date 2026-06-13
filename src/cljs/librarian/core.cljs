@@ -56,6 +56,7 @@
                (swap! app-state assoc :raw-state data)
                (let [scanned (or (get data "scanned_books") (get data :scanned_books) [])
                      orgs (or (get data "file_organization") (get data :file_organization) [])
+                     progress (or (get data "scan_progress") (get data :scan_progress))
                      ;; Create a lookup map of org-items keyed by filepath
                      orgs-map (into {} (map (fn [o] [(or (get o "filepath") (get o :filepath)) o]) orgs))
                      ;; Reconcile scanned list and org list into map structure
@@ -75,7 +76,7 @@
                                                                     :genre (or (get org "genre") (get org :genre))})
                                                       entry)]))
                                           scanned))]
-                 (swap! app-state assoc :scanned-books books-map))))))
+                 (swap! app-state assoc :scanned-books books-map :scan-progress progress))))))
 
 (defn fetch-logs! []
   (-> (js/fetch "/api/logs")
@@ -246,6 +247,25 @@
      
      ;; Sidebar system stats (Footer)
      [:div.mt-auto.pt-6.border-t.border-white-5.space-y-3
+      (let [progress (:scan-progress @app-state)
+            is-scanning (:is-scanning @app-state)
+            processed (or (get progress "processed") (get progress :processed) 0)
+            total (or (get progress "total") (get progress :total) 0)
+            phase (or (get progress "phase") (get progress :phase) "Idle")
+            current-file (or (get progress "current_file") (get progress :current_file) "")
+            percent (if (pos? total) (int (* 100 (/ processed total))) 0)]
+        (when (or is-scanning (and (pos? total) (not= phase "Idle")))
+          [:div.p-3.bg-black-30.border.border-white-10.rounded-lg.space-y-2.mb-1
+           [:div.flex.items-center.justify-between {:class "text-[10px]"}
+            [:span.text-brand.font-mono.font-bold.uppercase.tracking-wider (str phase)]
+            [:span.text-white.font-mono.font-semibold (str processed " / " total)]]
+           [:div.w-full.bg-gray-800.rounded-full.h-1.5.overflow-hidden
+            [:div.bg-brand.h-full.transition-all.duration-300
+             {:style {:width (str percent "%")}}]]
+           (when-not (empty? current-file)
+             [:p {:class "text-[9px] text-gray-500 font-mono truncate"}
+              (str "File: " current-file)])]))
+
       [:div.flex.items-center.justify-between {:class "text-[11px]"}
        [:span.text-gray-500 "Database Queue:"]
        [:span.text-brand.font-mono.font-semibold (str (count books) (if (= (count books) 1) " publication" " publications"))]]
