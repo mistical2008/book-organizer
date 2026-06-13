@@ -187,32 +187,57 @@
          [:span label-icon]])]
       [:div.pt-4.border-t.border-white-5.mt-4.space-y-2
        (let [is-scanning (:is-scanning @app-state)
-             is-paused? (get (:config @app-state) :scanPaused false)]
+             is-paused? (get (:config @app-state) :scanPaused false)
+             btn-disabled? (and is-scanning (not is-paused?))
+             btn-label (cond
+                         is-paused? "▶️ Resume manual scan"
+                         is-scanning "⏳ Scanning..."
+                         :else "🔍 Start Manual Scan")
+             btn-class (if btn-disabled?
+                         "bg-gray-800 text-gray-500 cursor-not-allowed border border-white-5"
+                         (if is-paused?
+                           "bg-amber-600 hover:bg-amber-500 text-white font-semibold shadow-md cursor-pointer border border-transparent"
+                           "bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-md cursor-pointer border border-transparent"))
+             on-click-handler (fn []
+                                (if is-paused?
+                                  (do
+                                    (toggle-scan-pause!)
+                                    (when-not is-scanning
+                                      (swap! app-state assoc :is-scanning true)
+                                      (-> (js/fetch "/api/scan" #js {:method "POST"})
+                                          (.then (fn [resp] (.json resp)))
+                                          (.then (fn [res]
+                                                   (swap! app-state assoc :is-scanning false)
+                                                   (fetch-state!)
+                                                   (fetch-logs!)))
+                                          (.catch (fn [err]
+                                                    (swap! app-state assoc :is-scanning false)
+                                                    (js/console.error err))))))
+                                  (do
+                                    (swap! app-state assoc :is-scanning true)
+                                    (-> (js/fetch "/api/scan" #js {:method "POST"})
+                                        (.then (fn [resp] (.json resp)))
+                                        (.then (fn [res]
+                                                 (swap! app-state assoc :is-scanning false)
+                                                 (fetch-state!)
+                                                 (fetch-logs!)))
+                                        (.catch (fn [err]
+                                                  (swap! app-state assoc :is-scanning false)
+                                                  (js/console.error err)))))))]
          [:div.space-y-2
           [:button.w-full.flex.items-center.justify-center.space-x-2.px-4.py-3.rounded-lg.text-xs.font-bold.transition-all
-           {:disabled is-scanning
-            :class (if is-scanning
-                     "bg-gray-800 text-gray-500 cursor-not-allowed border border-white-5"
-                     "bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow-md cursor-pointer border border-transparent")
-            :on-click (fn []
-                        (swap! app-state assoc :is-scanning true)
-                        (-> (js/fetch "/api/scan" #js {:method "POST"})
-                            (.then (fn [resp] (.json resp)))
-                            (.then (fn [res]
-                                     (swap! app-state assoc :is-scanning false)
-                                     (fetch-state!)
-                                     (fetch-logs!)))
-                            (.catch (fn [err]
-                                      (swap! app-state assoc :is-scanning false)
-                                      (js/console.error err)))))}
-           [:span (if is-scanning "⏳ Scanning..." "🔍 Start Manual Scan")]]
+           {:disabled btn-disabled?
+            :class btn-class
+            :on-click on-click-handler}
+           [:span btn-label]]
           (when (or is-scanning is-paused?)
-            [:button.w-full.flex.items-center.justify-center.space-x-2.px-4.py-2.5.rounded-lg.text-xs.font-bold.transition-all.cursor-pointer
-             {:class (if is-paused?
-                       "bg-amber-600 hover:bg-amber-500 text-white border border-transparent shadow"
-                       "bg-amber-900/30 hover:bg-amber-900/50 text-amber-300 border border-amber-500/35 hover:border-amber-500/50 shadow-sm")
+            [:button.w-full.flex.items-center.justify-center.space-x-2.px-4.py-2.5.rounded-lg.text-xs.font-bold.transition-all
+             {:disabled is-paused?
+              :class (if is-paused?
+                        "bg-gray-800 text-gray-500 cursor-not-allowed border border-white-5"
+                        "bg-amber-900/30 hover:bg-amber-900/50 text-amber-300 border border-amber-500/35 hover:border-amber-500/50 shadow-sm cursor-pointer")
               :on-click (fn [] (toggle-scan-pause!))}
-             [:span (if is-paused? "▶️ Resume Scan" "⏸️ Pause Scan")]])])]
+             [:span "⏸️ Pause Scan"]])])]
      
      ;; Sidebar system stats (Footer)
      [:div.mt-auto.pt-6.border-t.border-white-5.space-y-3
@@ -427,33 +452,60 @@
        [:div.bg-dark-12.p-6.rounded-xl.border.border-white-5.space-y-4
         [:h3.text-md.font-serif.text-brand "⚡ Pipeline Controllers"]
         [:p {:class "text-[11px] text-gray-400 leading-relaxed"} "Manage simulation runs, poll filesystem folders, and manually queue intake records."]
-        [:div.space-y-2
-         [:button.w-full.px-4.py-2.5.rounded-lg.text-xs.font-bold.transition-colors
-          {:class (if is-scanning "bg-gray-700 text-gray-400 cursor-not-allowed" "bg-brand text-black hover:bg-brand-hover")
-           :disabled is-scanning
-           :on-click (fn []
-                       (swap! app-state assoc :is-scanning true)
-                       (-> (js/fetch "/api/scan" #js {:method "POST"})
-                           (.then (fn [resp] (.json resp)))
-                           (.then (fn [res]
-                                    (swap! app-state assoc :is-scanning false)
-                                    (fetch-state!)
-                                    (fetch-logs!)))
-                           (.catch (fn [err]
-                                     (swap! app-state assoc :is-scanning false)
-                                     (js/console.error err)))))}
-          (if is-scanning "Running Classification Engine..." "Run Polling Check")]
-         (let [is-paused? (get (:config @app-state) :scanPaused false)]
+        (let [is-paused? (get (:config @app-state) :scanPaused false)
+              btn-disabled? (and is-scanning (not is-paused?))
+              btn-label (cond
+                          is-paused? "Resume manual scan"
+                          is-scanning "Running Classification Engine..."
+                          :else "Run Polling Check")
+              btn-class (if btn-disabled?
+                          "bg-gray-700 text-gray-400 cursor-not-allowed"
+                          (if is-paused?
+                            "bg-amber-600 hover:bg-amber-500 text-white font-bold cursor-pointer"
+                            "bg-brand text-black hover:bg-brand-hover font-bold cursor-pointer"))
+              on-click-handler (fn []
+                                 (if is-paused?
+                                   (do
+                                     (toggle-scan-pause!)
+                                     (when-not is-scanning
+                                       (swap! app-state assoc :is-scanning true)
+                                       (-> (js/fetch "/api/scan" #js {:method "POST"})
+                                           (.then (fn [resp] (.json resp)))
+                                           (.then (fn [res]
+                                                    (swap! app-state assoc :is-scanning false)
+                                                    (fetch-state!)
+                                                    (fetch-logs!)))
+                                           (.catch (fn [err]
+                                                     (swap! app-state assoc :is-scanning false)
+                                                     (js/console.error err))))))
+                                   (do
+                                     (swap! app-state assoc :is-scanning true)
+                                     (-> (js/fetch "/api/scan" #js {:method "POST"})
+                                         (.then (fn [resp] (.json resp)))
+                                         (.then (fn [res]
+                                                  (swap! app-state assoc :is-scanning false)
+                                                  (fetch-state!)
+                                                  (fetch-logs!)))
+                                         (.catch (fn [err]
+                                                   (swap! app-state assoc :is-scanning false)
+                                                   (js/console.error err)))))))]
+          [:div.space-y-2
+           [:button.w-full.px-4.py-2.5.rounded-lg.text-xs.transition-colors
+            {:class btn-class
+             :disabled btn-disabled?
+             :on-click on-click-handler}
+            btn-label]
            (when (or is-scanning is-paused?)
-             [:button.w-full.flex.items-center.justify-center.space-x-2.px-4.py-2.5.rounded-lg.text-xs.font-bold.transition-all.cursor-pointer
-              {:class (if is-paused?
-                        "bg-amber-600 hover:bg-amber-500 text-white shadow"
-                        "bg-amber-900/30 hover:bg-amber-900/50 text-amber-300 border border-amber-500/35 hover:border-amber-500/50 shadow-sm")
+             [:button.w-full.flex.items-center.justify-center.space-x-2.px-4.py-2.5.rounded-lg.text-xs.font-bold.transition-all
+              {:disabled is-paused?
+               :class (if is-paused?
+                         "bg-gray-800 text-gray-500 cursor-not-allowed border border-white-5"
+                         "bg-amber-900/30 hover:bg-amber-900/50 text-amber-300 border border-amber-500/35 hover:border-amber-500/50 shadow-sm cursor-pointer")
                :on-click (fn [] (toggle-scan-pause!))}
-              [:span (if is-paused? "▶️ Resume Scan" "⏸️ Pause Scan")]]))
+              [:span "⏸️ Pause Scan"]])])
          [:button.w-full.border.border-white-10.text-gray-300.px-4.py-2.5.rounded-lg.text-xs.font-medium.hover:bg-brand-soft.transition-colors
           {:on-click #(do (fetch-state!) (fetch-logs!) (fetch-config!))}
-          "Sync State"]]]
+          "Sync State"]]
           
         [:div.border-t.border-white-5.pt-4.space-y-3
          [:span.text-xs.font-serif.text-white.font-semibold "Simulated File Intake Queue"]
