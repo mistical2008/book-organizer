@@ -756,7 +756,51 @@
 (defn markup-file? [file-path]
   (let [filename (str/lower-case (.getName (io/file file-path)))]
     (or (str/ends-with? filename ".epub")
-        (str/ends-with? filename ".fb2"))))
+        (str/ends-with? filename ".fb2")
+        (str/ends-with? filename ".fb2.zip")
+        (str/ends-with? filename ".docx")
+        (str/ends-with? filename ".html")
+        (str/ends-with? filename ".htm")
+        (str/ends-with? filename ".txt")
+        (str/ends-with? filename ".md")
+        (str/ends-with? filename ".markdown"))))
+
+(defn extract-docx-text [file-path]
+  (try
+    (let [f (io/file file-path)]
+      (if (.exists f)
+        (with-open [zip (java.util.zip.ZipFile. f)]
+          (let [doc-entry (.getEntry zip "word/document.xml")]
+            (if doc-entry
+              (with-open [is (.getInputStream zip doc-entry)]
+                (let [text (slurp is :encoding "UTF-8")]
+                  (-> text
+                      (str/replace #"<[^>]+>" " ")
+                      (str/replace #"\s+" " ")
+                      str/trim)))
+              "")))
+        ""))
+    (catch Exception e
+      (println "⚠️ Failed to extract DOCX text: " (.getMessage e))
+      "")))
+
+(defn extract-html-text [file-path]
+  (try
+    (let [content (slurp file-path :encoding "UTF-8")]
+      (-> content
+          (str/replace #"<[^>]+>" " ")
+          (str/replace #"\s+" " ")
+          str/trim))
+    (catch Exception e
+      (println "⚠️ Failed to extract HTML text: " (.getMessage e))
+      "")))
+
+(defn extract-txt-text [file-path]
+  (try
+    (slurp file-path :encoding "UTF-8")
+    (catch Exception e
+      (println "⚠️ Failed to extract TXT text: " (.getMessage e))
+      "")))
 
 (defn extract-epub-text [file-path]
   (try
@@ -837,8 +881,13 @@
     (let [res (let [filename (.getName (io/file file-path))
                     ext (str/lower-case (some-> (re-find #"\.([^.]+)$" filename) second))]
                 (cond
-                  (or (= ext "epub") (= ext "fb2"))
-                  {:text (if (= ext "epub") (extract-epub-text file-path) (extract-fb2-text file-path))
+                  (or (= ext "epub") (= ext "fb2") (= ext "docx") (= ext "html") (= ext "htm") (= ext "txt") (= ext "md") (= ext "markdown") (str/ends-with? (str/lower-case filename) ".fb2.zip"))
+                  {:text (cond
+                           (= ext "epub") (extract-epub-text file-path)
+                           (= ext "docx") (extract-docx-text file-path)
+                           (or (= ext "html") (= ext "htm")) (extract-html-text file-path)
+                           (or (= ext "txt") (= ext "md") (= ext "markdown")) (extract-txt-text file-path)
+                           :else (extract-fb2-text file-path))
                    :ocr-status "not_required"}
 
                   (= ext "pdf")
@@ -1248,7 +1297,7 @@
         input-dirs (or (:inputDirs config) ["/data/books_to_sort"])
         enable-caching? (not= (:enableCaching config) false)
         resolved-inputs (map resolve-path input-dirs)
-        files (filter #(and (.isFile %) (re-find #"\.(pdf|epub|djvu|fb2)$" (.getName %)))
+        files (filter #(and (.isFile %) (re-find #"\.(pdf|epub|djvu|fb2|fb2\.zip|docx|html|htm|txt|md|markdown)$" (.getName %)))
                       (mapcat (fn [d]
                                 (let [f (io/file d)]
                                   (if (and (.exists f) (.isDirectory f))
